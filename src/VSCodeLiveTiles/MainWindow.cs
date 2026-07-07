@@ -29,6 +29,11 @@ public sealed class MainWindow : Window
     private IntPtr _selfHandle;
     private IntPtr _activeHandle;
 
+    // CC 状態バッジ（events.jsonl が読めない環境では null のまま＝機能ごと無効）
+    private CcEventsReader? _ccReader;
+    private CcStateTracker? _ccTracker;
+    private System.Windows.Threading.DispatcherTimer? _badgeTimer;
+
     // handle → タイル。thumbs: source handle → DWM サムネイル ID（最小化中は登録しない）
     private readonly Dictionary<IntPtr, ThumbnailTile> _tiles = new();
     private readonly Dictionary<IntPtr, IntPtr> _thumbs = new();
@@ -81,6 +86,73 @@ public sealed class MainWindow : Window
         _tracker.Updated += OnWindowsUpdated;
         _tracker.ActiveWindowChanged += OnActiveWindowChanged;
         _tracker.Start();
+
+        StartCcBadges();
+    }
+
+    /// <summary>
+    /// CC 状態バッジの監視を開始する。フック未導入・読み取り失敗時は静かに無効化し、
+    /// タイル・クリックの既存機能には影響させない（SPEC §6）。
+    /// </summary>
+    private void StartCcBadges()
+    {
+        CcEventsReader? reader = null;
+        try
+        {
+            var tracker = new CcStateTracker();
+            reader = new CcEventsReader();
+            reader.Received += tracker.Apply;
+            tracker.Changed += ApplyCcStates;
+            if (!reader.Start())
+            {
+                reader.Dispose();
+                return;
+            }
+            _ccTracker = tracker;
+            _ccReader = reader;
+        }
+        catch
+        {
+            reader?.Dispose();
+            _ccReader = null;
+            _ccTracker = null;
+        }
+    }
+
+    /// <summary>各タイルへ代表状態を配布し、待ちタイルの有無で経過時間タイマーを回す/止める。</summary>
+    private void ApplyCcStates()
+    {
+        if (_ccTracker is null)
+            return;
+
+        bool anyWaiting = false;
+        foreach (var tile in _tiles.Values)
+        {
+            var resolved = _ccTracker.Resolve(tile.CaptionText);
+            tile.SetCcState(resolved?.State ?? CcState.None, resolved?.Since ?? default);
+            anyWaiting |= tile.IsCcWaiting;
+        }
+
+        if (anyWaiting)
+        {
+            if (_badgeTimer is null)
+            {
+                _badgeTimer = new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(1),
+                };
+                _badgeTimer.Tick += (_, _) =>
+                {
+                    foreach (var tile in _tiles.Values)
+                        tile.RefreshBadgeClock();
+                };
+            }
+            _badgeTimer.Start();
+        }
+        else
+        {
+            _badgeTimer?.Stop();
+        }
     }
 
     private void OnActiveWindowChanged(IntPtr handle)
@@ -162,6 +234,7 @@ public sealed class MainWindow : Window
         _emptyLabel.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         ApplyActiveHighlight();
+        ApplyCcStates(); // 新規タイル・タイトル変化（照合キー変化）に追従
 
         // レイアウト確定後に矩形を更新
         Dispatcher.BeginInvoke(new Action(UpdateThumbnailRects), System.Windows.Threading.DispatcherPriority.Loaded);
@@ -220,6 +293,8 @@ public sealed class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _badgeTimer?.Stop();
+        _ccReader?.Dispose();
         _tracker?.Dispose();
         foreach (var id in _thumbs.Values)
             DwmThumbnail.Unregister(id);

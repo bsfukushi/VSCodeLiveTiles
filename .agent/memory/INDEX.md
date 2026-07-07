@@ -1,0 +1,148 @@
+# INDEX.md - メモリ目次
+
+> 自動生成 — `py ~/.claude/scripts/generate-index.py` で更新
+> エントリ数: memory 0 件 / troubleshoot 32 件
+
+## タイプ別
+
+### troubleshoot (31件)
+
+- **barcode-reader-ime** [barcode, ime, input, windows] — 
+- **better-sqlite3-electron-rebuild** [better-sqlite3, electron, native-module, rebuild] — 
+- **bulk-replace-side-effects** [refactoring, replace, side-effect] — 
+- **cp932-unicode-output** [python, windows, encoding, cp932] — 
+- **css-inline-priority** [css, specificity, inline-style] — 
+- **ecc-agent-not-found** [claude-code, subagent, ecc, agents, vscode-extension] — 
+- **edit-garbled-japanese** [edit-tool, japanese, encoding, utf8] — 
+- **env-append-no-trailing-newline** [env, shell, ssh, append, newline, secrets, sakura] — .env に `>> ` や printf で追記したら最終行の変数値に連結して秘密鍵が壊れた
+- **firebase-auth-navigate-timing** [firebase, auth, react, navigation] — 
+- **firebase-emulator-java-missing** [firebase, emulator, java, winget, windows] — 
+- **firebase-key-vsix** [firebase, vscodeignore, vsix, credentials] — 
+- **firestore-composite-index** [firestore, index, query] — 
+- **firestore-named-database** [firestore, database, configuration] — 
+- **firestore-security-rules-query** [firestore, security-rules, query, permission] — 
+- **imap-modified-utf7** [imap, encoding, utf7, japanese, imapflow] — 
+- **imap-move-uid-stale** [imap, imapflow, uid, move, mail] — 
+- **msys2-drive-path** [python, msys2, git-bash, windows, path] — 
+- **npm-outdated-versions** [npm, package-version, dependency] — 
+- **phantom-user-message-hallucination** [claude-code, hallucination, context-compaction, long-session, session-management] — 
+- **smtputf8-header-bounce** [mail, postfix, php, encoding, smtputf8] — 
+- **sqlite-jst-datetime** [sqlite, datetime, timezone, jst] — 
+- **ssh-cygdrive-path-direct-call** [ssh, scp, cygwin, cygdrive, git-bash, windows, sakura, deploy, marathon, migration] — deploy.sh 流用で ssh を直叩きすると Local 同梱 cygwin ssh の /cygdrive パス
+- **toisostring-date-offset** [javascript, date, timezone, jst] — 
+- **vba-http-cache** [vba, http, cache, windows] — 
+- **vscode-cli-fullpath** [vscode, cli, windows, path, electron] — 
+- **vscode-keybindings-config** [vscode, keybindings, claude-code, settings] — 
+- **vscode-sdk-stream-stall** [claude-code, vscode-extension, sdk, stream, stall, error-handling] — 
+- **vscodeignore-transitive-deps** [vscodeignore, better-sqlite3, native-module, vsce, vsix] — 
+- **vsix-version-bump** [vsix, vscode, version, packaging] — 
+- **webview-prompt-confirm-blocked** [vscode, webview, prompt, confirm, ui] — 
+- **worktree-agent-destructive** [worktree, agent, parallel, destructive] — 
+
+## タグ別クイックリファレンス
+
+- `agent` (1): worktree-agent-destructive
+- `agents` (1): ecc-agent-not-found
+- `append` (1): env-append-no-trailing-newline
+- `auth` (1): firebase-auth-navigate-timing
+- `barcode` (1): barcode-reader-ime
+- `better-sqlite3` (2): better-sqlite3-electron-rebuild, vscodeignore-transitive-deps
+- `cache` (1): vba-http-cache
+- `claude-code` (4): ecc-agent-not-found, phantom-user-message-hallucination, vscode-keybindings-config, vscode-sdk-stream-stall
+- `cli` (1): vscode-cli-fullpath
+- `cloud-functions` (1): firebase-functions-eventarc-first-trigger
+- `configuration` (1): firestore-named-database
+- `confirm` (1): webview-prompt-confirm-blocked
+- `context-compaction` (1): phantom-user-message-hallucination
+- `cp932` (1): cp932-unicode-output
+- `credentials` (1): firebase-key-vsix
+- `css` (1): css-inline-priority
+- `cygdrive` (1): ssh-cygdrive-path-direct-call
+- `cygwin` (1): ssh-cygdrive-path-direct-call
+- `database` (1): firestore-named-database
+- `date` (1): toisostring-date-offset
+- `datetime` (1): sqlite-jst-datetime
+- `dependency` (1): npm-outdated-versions
+- `deploy` (1): ssh-cygdrive-path-direct-call
+- `destructive` (1): worktree-agent-destructive
+- `ecc` (1): ecc-agent-not-found
+- `edit-tool` (1): edit-garbled-japanese
+- `electron` (2): better-sqlite3-electron-rebuild, vscode-cli-fullpath
+- `emulator` (1): firebase-emulator-java-missing
+- `encoding` (4): cp932-unicode-output, edit-garbled-japanese, imap-modified-utf7, smtputf8-header-bounce
+- `env` (1): env-append-no-trailing-newline
+- `error-handling` (1): vscode-sdk-stream-stall
+- `eventarc` (1): firebase-functions-eventarc-first-trigger
+- `firebase` (4): firebase-auth-navigate-timing, firebase-emulator-java-missing, firebase-functions-eventarc-first-trigger, firebase-key-vsix
+- `firestore` (3): firestore-composite-index, firestore-named-database, firestore-security-rules-query
+- `firestore-trigger` (1): firebase-functions-eventarc-first-trigger
+- `git-bash` (2): msys2-drive-path, ssh-cygdrive-path-direct-call
+- `hallucination` (1): phantom-user-message-hallucination
+- `http` (1): vba-http-cache
+- `imap` (2): imap-modified-utf7, imap-move-uid-stale
+- `imapflow` (2): imap-modified-utf7, imap-move-uid-stale
+- `ime` (1): barcode-reader-ime
+- `index` (1): firestore-composite-index
+- `inline-style` (1): css-inline-priority
+- `input` (1): barcode-reader-ime
+- `japanese` (2): edit-garbled-japanese, imap-modified-utf7
+- `java` (1): firebase-emulator-java-missing
+- `javascript` (1): toisostring-date-offset
+- `jst` (2): sqlite-jst-datetime, toisostring-date-offset
+- `keybindings` (1): vscode-keybindings-config
+- `long-session` (1): phantom-user-message-hallucination
+- `mail` (2): imap-move-uid-stale, smtputf8-header-bounce
+- `marathon` (1): ssh-cygdrive-path-direct-call
+- `migration` (1): ssh-cygdrive-path-direct-call
+- `move` (1): imap-move-uid-stale
+- `msys2` (1): msys2-drive-path
+- `native-module` (2): better-sqlite3-electron-rebuild, vscodeignore-transitive-deps
+- `navigation` (1): firebase-auth-navigate-timing
+- `newline` (1): env-append-no-trailing-newline
+- `npm` (1): npm-outdated-versions
+- `package-version` (1): npm-outdated-versions
+- `packaging` (1): vsix-version-bump
+- `parallel` (1): worktree-agent-destructive
+- `path` (2): msys2-drive-path, vscode-cli-fullpath
+- `permission` (1): firestore-security-rules-query
+- `php` (1): smtputf8-header-bounce
+- `postfix` (1): smtputf8-header-bounce
+- `prompt` (1): webview-prompt-confirm-blocked
+- `python` (2): cp932-unicode-output, msys2-drive-path
+- `query` (2): firestore-composite-index, firestore-security-rules-query
+- `react` (1): firebase-auth-navigate-timing
+- `rebuild` (1): better-sqlite3-electron-rebuild
+- `refactoring` (1): bulk-replace-side-effects
+- `replace` (1): bulk-replace-side-effects
+- `sakura` (2): env-append-no-trailing-newline, ssh-cygdrive-path-direct-call
+- `scp` (1): ssh-cygdrive-path-direct-call
+- `sdk` (1): vscode-sdk-stream-stall
+- `secrets` (1): env-append-no-trailing-newline
+- `security-rules` (1): firestore-security-rules-query
+- `session-management` (1): phantom-user-message-hallucination
+- `settings` (1): vscode-keybindings-config
+- `shell` (1): env-append-no-trailing-newline
+- `side-effect` (1): bulk-replace-side-effects
+- `smtputf8` (1): smtputf8-header-bounce
+- `specificity` (1): css-inline-priority
+- `sqlite` (1): sqlite-jst-datetime
+- `ssh` (2): env-append-no-trailing-newline, ssh-cygdrive-path-direct-call
+- `stall` (1): vscode-sdk-stream-stall
+- `stream` (1): vscode-sdk-stream-stall
+- `subagent` (1): ecc-agent-not-found
+- `timezone` (2): sqlite-jst-datetime, toisostring-date-offset
+- `ui` (1): webview-prompt-confirm-blocked
+- `uid` (1): imap-move-uid-stale
+- `utf7` (1): imap-modified-utf7
+- `utf8` (1): edit-garbled-japanese
+- `vba` (1): vba-http-cache
+- `version` (1): vsix-version-bump
+- `vsce` (1): vscodeignore-transitive-deps
+- `vscode` (4): vscode-cli-fullpath, vscode-keybindings-config, vsix-version-bump, webview-prompt-confirm-blocked
+- `vscode-extension` (2): ecc-agent-not-found, vscode-sdk-stream-stall
+- `vscodeignore` (2): firebase-key-vsix, vscodeignore-transitive-deps
+- `vsix` (3): firebase-key-vsix, vscodeignore-transitive-deps, vsix-version-bump
+- `webview` (1): webview-prompt-confirm-blocked
+- `windows` (7): barcode-reader-ime, cp932-unicode-output, firebase-emulator-java-missing, msys2-drive-path, ssh-cygdrive-path-direct-call, vba-http-cache, vscode-cli-fullpath
+- `winget` (1): firebase-emulator-java-missing
+- `worktree` (1): worktree-agent-destructive

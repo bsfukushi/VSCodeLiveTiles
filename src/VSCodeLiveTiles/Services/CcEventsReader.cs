@@ -1,0 +1,238 @@
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using System.Windows.Threading;
+
+namespace VSCodeLiveTiles.Services;
+
+/// <summary>CC フックイベント 1 件。events.jsonl の 1 行に対応する。</summary>
+public sealed record CcEventRecord(long Ts, string Type, string? SessionId, string? ProjectName, string? Cwd);
+
+/// <summary>
+/// CCPet フック（append-event.mjs）が追記する events.jsonl の tail リーダー。
+/// 起動時に末尾 512KB を遡って状態を再構築し、以後は FileSystemWatcher ＋
+/// 1 秒間隔の保険ポーリング（WinEvent＋ポーリングと同じ思想）で追記分のみ読む。
+///
+/// - このクラスはファイルに一切書き込まない（読み取り専用・FileShare.ReadWrite で開く）
+/// - ファイル長がオフセットより短くなったらローテーションとみなし先頭から再読込
+/// - 壊れた行・書き込み途中の行はスキップ（フック側も途中で切れた行はパース側でスキップ前提）
+/// - イベントは UI スレッド（生成元 Dispatcher）で発火する
+/// </summary>
+public sealed class CcEventsReader : IDisposable
+{
+    private const int TailBytes = 512 * 1024;
+    private const int PollIntervalMs = 1000;
+
+    private readonly string _file;
+    private readonly Dispatcher _dispatcher;
+    private FileSystemWatcher? _watcher;
+    private DispatcherTimer? _pollTimer;
+
+    private long _offset;
+    private byte[] _pendingBytes = Array.Empty<byte>(); // 改行未達の行末尾（マルチバイト分断対策でバイトのまま保持）
+    private bool _draining;
+    private bool _disposed;
+
+    /// <summary>新しいイベントを読み取ったときに UI スレッドで発火（追記順）。</summary>
+    public event Action<IReadOnlyList<CcEventRecord>>? Received;
+
+    public CcEventsReader()
+    {
+        _dispatcher = Dispatcher.CurrentDispatcher;
+        _file = ResolveEventsFile();
+    }
+
+    private static string ResolveEventsFile()
+    {
+        var fromEnv = Environment.GetEnvironmentVariable("CCPET_EVENTS_FILE");
+        if (!string.IsNullOrWhiteSpace(fromEnv) && Path.IsPathRooted(fromEnv))
+            return fromEnv;
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ccpet", "events.jsonl");
+    }
+
+    /// <summary>
+    /// 監視を開始する。フック未導入（ディレクトリ不在）なら false を返し、何もしない。
+    /// ファイル自体の不在は「まだイベントがない」だけなので監視は続ける。
+    /// </summary>
+    public bool Start()
+    {
+        var dir = Path.GetDirectoryName(_file);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            return false;
+
+        // 起動時: 末尾 512KB から状態を再構築
+        if (File.Exists(_file))
+        {
+            try
+            {
+                using var fs = OpenShared();
+                if (fs.Length > TailBytes)
+                {
+                    fs.Position = fs.Length - TailBytes;
+                    SkipToNextLine(fs); // 行の途中（マルチバイトの途中の可能性あり）を読み捨てる
+                }
+                _offset = fs.Position;
+            }
+            catch
+            {
+                _offset = 0;
+            }
+        }
+
+        try
+        {
+            _watcher = new FileSystemWatcher(dir, Path.GetFileName(_file))
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+            };
+            _watcher.Changed += (_, _) => RequestDrain();
+            _watcher.Created += (_, _) => RequestDrain();
+            _watcher.EnableRaisingEvents = true;
+        }
+        catch
+        {
+            _watcher = null; // ポーリングのみで続行
+        }
+
+        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(PollIntervalMs) };
+        _pollTimer.Tick += (_, _) => Drain();
+        _pollTimer.Start();
+
+        Drain();
+        return true;
+    }
+
+    private FileStream OpenShared()
+        => new(_file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+    private static void SkipToNextLine(FileStream fs)
+    {
+        int b;
+        while ((b = fs.ReadByte()) != -1)
+        {
+            if (b == '\n')
+                return;
+        }
+    }
+
+    /// <summary>FileSystemWatcher はスレッドプールで発火するため UI スレッドへ寄せる。</summary>
+    private void RequestDrain()
+        => _dispatcher.BeginInvoke(new Action(Drain), DispatcherPriority.Background);
+
+    private void Drain()
+    {
+        if (_disposed || _draining)
+            return;
+        _draining = true;
+        try
+        {
+            // ハンドルを開く前に長さだけ確認し、未変化ならポーリングを空振りで終える
+            var fi = new FileInfo(_file);
+            if (!fi.Exists || fi.Length == _offset)
+                return;
+
+            using var fs = OpenShared();
+            if (fs.Length < _offset)
+            {
+                // ローテーション（truncate / 差し替え）: 先頭から読み直す
+                _offset = 0;
+                _pendingBytes = Array.Empty<byte>();
+            }
+            if (fs.Length == _offset)
+                return;
+
+            fs.Position = _offset;
+            var appended = new byte[fs.Length - _offset];
+            int read = 0;
+            while (read < appended.Length)
+            {
+                int n = fs.Read(appended, read, appended.Length - read);
+                if (n <= 0)
+                    break;
+                read += n;
+            }
+            _offset += read;
+
+            var records = ParseLines(appended.AsSpan(0, read));
+            if (records.Count > 0)
+                Received?.Invoke(records);
+        }
+        catch
+        {
+            // 読めない瞬間（書き込み競合等）は次のポーリングで回収する
+        }
+        finally
+        {
+            _draining = false;
+        }
+    }
+
+    /// <summary>
+    /// 追記分を前回の未完行と連結し、完全な行だけをパースする。
+    /// 最後の改行以降（書き込み途中の行）はバイトのまま持ち越す。
+    /// </summary>
+    private List<CcEventRecord> ParseLines(ReadOnlySpan<byte> appended)
+    {
+        var buf = new byte[_pendingBytes.Length + appended.Length];
+        _pendingBytes.CopyTo(buf, 0);
+        appended.CopyTo(buf.AsSpan(_pendingBytes.Length));
+
+        var records = new List<CcEventRecord>();
+        int lineStart = 0;
+        for (int i = 0; i < buf.Length; i++)
+        {
+            if (buf[i] != '\n')
+                continue;
+            var record = ParseLine(buf.AsSpan(lineStart, i - lineStart));
+            if (record is not null)
+                records.Add(record);
+            lineStart = i + 1;
+        }
+        _pendingBytes = lineStart >= buf.Length ? Array.Empty<byte>() : buf[lineStart..];
+        return records;
+    }
+
+    private static CcEventRecord? ParseLine(ReadOnlySpan<byte> line)
+    {
+        // CR（CRLF 対応）と空行を除去
+        if (line.Length > 0 && line[^1] == '\r')
+            line = line[..^1];
+        if (line.IsEmpty)
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(line));
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return null;
+            if (!root.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String)
+                return null;
+
+            long ts = root.TryGetProperty("ts", out var tsEl) && tsEl.ValueKind == JsonValueKind.Number
+                ? tsEl.GetInt64() : 0;
+            return new CcEventRecord(
+                ts,
+                typeEl.GetString()!,
+                GetStringOrNull(root, "sessionId"),
+                GetStringOrNull(root, "projectName"),
+                GetStringOrNull(root, "cwd"));
+        }
+        catch
+        {
+            return null; // 壊れた行はスキップ
+        }
+    }
+
+    private static string? GetStringOrNull(JsonElement obj, string name)
+        => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+        _pollTimer?.Stop();
+        _watcher?.Dispose();
+    }
+}
