@@ -161,6 +161,8 @@ public sealed class ThumbnailTile : Border
             _captionBar.Background = CaptionBg;
             _caption.Foreground = CaptionFg;
         }
+
+        UpdateBadge(); // バッジ配色はアクティブ状態に依存する（青帯では白・太字）
     }
 
     /// <summary>
@@ -211,28 +213,33 @@ public sealed class ThumbnailTile : Border
 
     private void UpdateBadge()
     {
+        Brush stateFg;
         switch (_ccState)
         {
             case CcState.WaitingQuestion:
                 _badge.Text = $"❓ 質問 {FormatElapsed()}";
-                _badge.Foreground = QuestionFg;
+                stateFg = QuestionFg;
                 break;
             case CcState.WaitingPermission:
                 _badge.Text = $"🔑 承認 {FormatElapsed()}";
-                _badge.Foreground = PermissionFg;
+                stateFg = PermissionFg;
                 break;
             case CcState.Done:
                 _badge.Text = "✔ 完了";
-                _badge.Foreground = DoneFg;
+                stateFg = DoneFg;
                 break;
             case CcState.Working:
                 _badge.Text = "● 作業中";
-                _badge.Foreground = WorkingFg;
+                stateFg = WorkingFg;
                 break;
             default:
                 _badge.Visibility = Visibility.Collapsed;
                 return;
         }
+
+        // アクティブ（青帯）上では状態色が沈むため白・太字に切り替える
+        _badge.Foreground = _isActive ? ActiveCaptionFg : stateFg;
+        _badge.FontWeight = _isActive ? FontWeights.Bold : FontWeights.Normal;
         _badge.Visibility = Visibility.Visible;
     }
 
