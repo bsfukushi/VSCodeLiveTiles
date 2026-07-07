@@ -48,6 +48,9 @@ public static class NativeWindows
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
+    /// <summary>現在の前面ウィンドウのハンドル。</summary>
+    public static IntPtr GetForeground() => GetForegroundWindow();
+
     [DllImport("user32.dll")]
     private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
 

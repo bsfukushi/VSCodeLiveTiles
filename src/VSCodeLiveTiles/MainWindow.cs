@@ -27,6 +27,7 @@ public sealed class MainWindow : Window
 
     private WindowTracker? _tracker;
     private IntPtr _selfHandle;
+    private IntPtr _activeHandle;
 
     // handle → タイル。thumbs: source handle → DWM サムネイル ID（最小化中は登録しない）
     private readonly Dictionary<IntPtr, ThumbnailTile> _tiles = new();
@@ -74,9 +75,24 @@ public sealed class MainWindow : Window
 
         PositionOnWidgetMonitor();
 
+        _activeHandle = NativeWindows.GetForeground();
+
         _tracker = new WindowTracker(_config, () => _selfHandle);
         _tracker.Updated += OnWindowsUpdated;
+        _tracker.ActiveWindowChanged += OnActiveWindowChanged;
         _tracker.Start();
+    }
+
+    private void OnActiveWindowChanged(IntPtr handle)
+    {
+        _activeHandle = handle;
+        ApplyActiveHighlight();
+    }
+
+    private void ApplyActiveHighlight()
+    {
+        foreach (var (handle, tile) in _tiles)
+            tile.SetActive(handle == _activeHandle);
     }
 
     /// <summary>ウィジェット用モニターの作業領域へ物理ピクセルで配置する（DPI 変換を避ける）。</summary>
@@ -144,6 +160,8 @@ public sealed class MainWindow : Window
         int n = desired.Count;
         _grid.Columns = n == 0 ? 1 : (int)Math.Ceiling(Math.Sqrt(n));
         _emptyLabel.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        ApplyActiveHighlight();
 
         // レイアウト確定後に矩形を更新
         Dispatcher.BeginInvoke(new Action(UpdateThumbnailRects), System.Windows.Threading.DispatcherPriority.Loaded);

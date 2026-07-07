@@ -41,6 +41,9 @@ internal sealed class WinEventHook : IDisposable
     /// <summary>差分が発生したことを UI スレッドで通知する（デバウンス済み）。</summary>
     public event Action? Changed;
 
+    /// <summary>前面ウィンドウが変わったことを UI スレッドで即時通知する（ハンドルを渡す）。</summary>
+    public event Action<IntPtr>? ForegroundChanged;
+
     public WinEventHook()
     {
         _proc = OnWinEvent;
@@ -76,6 +79,13 @@ internal sealed class WinEventHook : IDisposable
         // ウィンドウ本体（子コントロールでない）だけを対象にノイズを削る
         if (idObject != OBJID_WINDOW)
             return;
+
+        // 前面変化はアクティブ強調のため即時通知（デバウンスしない）
+        if (eventType == EVENT_SYSTEM_FOREGROUND)
+        {
+            var fg = hwnd;
+            _debounce.Dispatcher.BeginInvoke(() => ForegroundChanged?.Invoke(fg));
+        }
 
         // OUTOFCONTEXT のコールバックは通知元スレッドで来る。UI スレッドでデバウンス起動。
         _debounce.Dispatcher.BeginInvoke(() =>

@@ -20,6 +20,9 @@ public sealed class WindowTracker : IDisposable
     /// <summary>ウィンドウ集合が変化したときに UI スレッドで発火。最新スナップショットを渡す。</summary>
     public event Action<IReadOnlyList<NativeWindows.WindowInfo>>? Updated;
 
+    /// <summary>前面ウィンドウが変わったときに UI スレッドで発火（ハンドルを渡す）。</summary>
+    public event Action<IntPtr>? ActiveWindowChanged;
+
     public WindowTracker(AppConfig config, Func<IntPtr> selfHandleProvider)
     {
         _processNames = new HashSet<string>(config.TargetProcessNames, StringComparer.OrdinalIgnoreCase);
@@ -27,6 +30,7 @@ public sealed class WindowTracker : IDisposable
 
         _hook = new WinEventHook();
         _hook.Changed += Rescan;
+        _hook.ForegroundChanged += h => ActiveWindowChanged?.Invoke(h);
 
         if (config.RefreshIntervalMs > 0)
         {
