@@ -120,7 +120,7 @@ public sealed class ThumbnailTile : Border
         };
         _clock = new TextBlock
         {
-            FontSize = 16,
+            FontSize = 20, // 状態バッジと同じ（色だけ控えめにして主張を抑える）
             Margin = new Thickness(0, 3, 12, 3),
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
