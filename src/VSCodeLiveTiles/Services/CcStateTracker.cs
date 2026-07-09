@@ -4,12 +4,16 @@ namespace VSCodeLiveTiles.Services;
 
 /// <summary>
 /// Claude Code セッションの表示状態。値の大きい方が優先（ウィンドウ単位の代表選出に使う）。
+///
+/// 同じフォルダ名に複数セッションがぶら下がるとき（同一プロジェクトを別ウィンドウで開いた等）、
+/// Done は Working より弱い。完了は過去の結果、作業中は現在進行なので、
+/// 片方が動いているならタイルは「作業中」を出すべき。
 /// </summary>
 public enum CcState
 {
     None = 0,
-    Working = 1,
-    Done = 2,
+    Done = 1,
+    Working = 2,
     WaitingPermission = 3,
     WaitingQuestion = 4,
 }
