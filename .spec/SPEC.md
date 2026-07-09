@@ -160,6 +160,14 @@ Services/
   - 既知の残課題: 死んだセッションが `WaitingPermission` のまま残ると、そのタイルは
     `StaleAge`（24 時間）ずっと承認待ちに固定される。塞ぐなら `Resolve` 側で
     「一定時間更新のないセッションを代表選出から外す」
+- `stop` は「完了」とは限らない（2026-07-09 承認 / v0.6.4）
+  - `stop` はメインエージェントのターン終了にすぎず、**サブエージェント（`type: subagent`）や
+    `run_in_background` の Bash（`type: shell`）は走り続ける**
+  - `stop` の `payload.background_tasks` に、その時点で生きているタスクが入る。
+    終わったタスクはリストから消えるため `status` は `running` しか現れない
+  - よって `stop` かつ running な背景タスクあり → `Working`、なし → `Done` とする
+  - 実測（2026-07-09 PropBoard）: 背景 4 件 → 2 件 → 0 件と減り、最後の `stop` で `Done` に落ちる。
+    サブエージェント完了を示すイベント（`SubagentStop`）をフックに足さなくても自然に閉じる
 
 ---
 

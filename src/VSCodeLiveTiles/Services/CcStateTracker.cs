@@ -65,7 +65,7 @@ public sealed class CcStateTracker
                 continue;
             }
 
-            var state = MapState(r.Type);
+            var state = MapState(r);
             if (state is null)
             {
                 // 未知イベントは状態を変えないが、鮮度だけは更新する（前方互換・誤 purge 防止）
@@ -100,12 +100,14 @@ public sealed class CcStateTracker
             Changed?.Invoke();
     }
 
-    private static CcState? MapState(string type) => type switch
+    private static CcState? MapState(CcEventRecord r) => r.Type switch
     {
         "pre_tool_use" => CcState.WaitingQuestion,        // フック側で AskUserQuestion のみに絞られている
         "permission_request" => CcState.WaitingPermission,
         "notification" => CcState.WaitingPermission,      // 許可要求・アイドル通知も「承認待ち」扱い（SPEC §2）
-        "stop" => CcState.Done,
+        // stop はメインエージェントのターン終了にすぎない。サブエージェントや
+        // run_in_background の Bash が残っていれば作業は続いている（SPEC §8）
+        "stop" => r.HasRunningBackgroundTasks ? CcState.Working : CcState.Done,
         "user_prompt_submit" => CcState.Working,
         "post_tool_use" => CcState.Working,               // AUQ 回答後・承認後の解除もこれで拾える
         "session_start" => CcState.None,

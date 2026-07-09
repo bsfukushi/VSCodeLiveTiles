@@ -6,7 +6,11 @@ using System.Windows.Threading;
 namespace VSCodeLiveTiles.Services;
 
 /// <summary>CC フックイベント 1 件。events.jsonl の 1 行に対応する。</summary>
-public sealed record CcEventRecord(long Ts, string Type, string? SessionId, string? ProjectName, string? Cwd);
+/// <param name="HasRunningBackgroundTasks">
+/// stop 時点で走り続けている背景タスクがあるか（stop 以外では常に false）。
+/// </param>
+public sealed record CcEventRecord(
+    long Ts, string Type, string? SessionId, string? ProjectName, string? Cwd, bool HasRunningBackgroundTasks);
 
 /// <summary>
 /// CCPet フック（append-event.mjs）が追記する events.jsonl の tail リーダー。
@@ -216,7 +220,8 @@ public sealed class CcEventsReader : IDisposable
                 typeEl.GetString()!,
                 GetStringOrNull(root, "sessionId"),
                 GetStringOrNull(root, "projectName"),
-                GetStringOrNull(root, "cwd"));
+                GetStringOrNull(root, "cwd"),
+                HasRunningBackgroundTask(root));
         }
         catch
         {
@@ -226,6 +231,30 @@ public sealed class CcEventsReader : IDisposable
 
     private static string? GetStringOrNull(JsonElement obj, string name)
         => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+
+    /// <summary>
+    /// payload.background_tasks に status="running" のタスクがあるか。
+    /// メインエージェントが喋り終わって stop が出ても、サブエージェント（type=subagent）や
+    /// run_in_background の Bash（type=shell）はそのまま走り続ける。
+    /// 終わったタスクはリストから消えるので、running が 1 つでもあれば作業は継続中。
+    /// </summary>
+    private static bool HasRunningBackgroundTask(JsonElement root)
+    {
+        if (!root.TryGetProperty("payload", out var payload) || payload.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!payload.TryGetProperty("background_tasks", out var tasks) || tasks.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (var task in tasks.EnumerateArray())
+        {
+            if (task.ValueKind == JsonValueKind.Object
+                && task.TryGetProperty("status", out var status)
+                && status.ValueKind == JsonValueKind.String
+                && status.ValueEquals("running"))
+                return true;
+        }
+        return false;
+    }
 
     public void Dispose()
     {
