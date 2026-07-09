@@ -45,6 +45,7 @@ public sealed class ThumbnailTile : Border
     private bool _isActive;
     private CcState _ccState = CcState.None;
     private DateTime _ccSince;
+    private bool _ccAcknowledged; // 待ちを一度見に行ったか（グローを止める根拠）
     private SolidColorBrush? _glowBrush; // 待ちグロー用（Opacity をアニメーションするため非 Freeze）
 
     public IntPtr Handle { get; private set; }
@@ -55,6 +56,14 @@ public sealed class ThumbnailTile : Border
 
     /// <summary>質問待ち・承認待ちか（経過時間タイマーの稼働判定に使う）。</summary>
     public bool IsCcWaiting => _ccState is CcState.WaitingQuestion or CcState.WaitingPermission;
+
+    /// <summary>
+    /// 未確認の待ちか。CC には「承認した瞬間」に発火するフックがなく、承認待ちが解除されるのは
+    /// ツール完了時（post_tool_use）なので、長いツールほど待ちバッジが残り続ける。
+    /// 承認するにはそのウィンドウを前面に出すしかないため、前面化を「確認した」とみなして
+    /// 明滅だけ止める。バッジ本体は post_tool_use まで残す。
+    /// </summary>
+    private bool IsCcWaitingUnseen => IsCcWaiting && !_ccAcknowledged;
 
     /// <summary>DWM サムネイルを合成する矩形の基準要素（メインウィンドウがここの位置を測る）。</summary>
     public UIElement ThumbnailArea => _contentArea;
@@ -134,14 +143,16 @@ public sealed class ThumbnailTile : Border
         if (_isActive == active)
             return;
         _isActive = active;
+        if (active && IsCcWaiting)
+            _ccAcknowledged = true;
         ApplyHighlight();
     }
 
-    // 枠の優先度：待ちグロー ＞ アクティブ ＞ ホバー ＞ 通常（SPEC §5）
+    // 枠の優先度：未確認の待ちグロー ＞ アクティブ ＞ ホバー ＞ 通常（SPEC §5）
     // キャプション帯の配色はアクティブ状態のまま（待ち中でも前面かどうかは見えるように）
     private void ApplyHighlight()
     {
-        if (IsCcWaiting)
+        if (IsCcWaitingUnseen)
         {
             BorderBrush = GetOrStartGlow(_ccState == CcState.WaitingQuestion ? QuestionColor : PermissionColor);
         }
@@ -200,6 +211,9 @@ public sealed class ThumbnailTile : Border
             return;
         _ccState = state;
         _ccSince = since;
+        // 新しい待ちは未確認から始める。ただし既に前面なら目の前に出ているので確認済み扱い。
+        // 非アクティブ化ではリセットしない（承認直後に離れると明滅がぶり返すため）。
+        _ccAcknowledged = IsCcWaiting && _isActive;
         UpdateBadge();
         ApplyHighlight();
     }

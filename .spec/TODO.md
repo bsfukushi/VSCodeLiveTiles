@@ -5,7 +5,7 @@
 
 ## バージョン
 
-> **現在: v0.6.0**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.6.1**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
