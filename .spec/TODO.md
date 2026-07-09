@@ -5,7 +5,7 @@
 
 ## バージョン
 
-> **現在: v0.7.0**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.7.2**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -49,7 +49,12 @@
       （サブエージェント・`run_in_background` の Bash が残っているのに「完了」が出ていた）
 - [x] v0.7.0 セッション時計（開始時刻 ▸ 経過）
       （`session_start` は末尾 512KB の外にあるため全体走査で拾う）
-- [ ] 実機動作確認（publish し直して常駐プロセスを入れ替える）
+- [x] v0.7.1 セッション時計のフォントを状態バッジと同じ 20px に（16px は小さかった）
+- [x] v0.7.2 多重起動時に 2 つ目のインスタンスがクラッシュする問題を修正
+      （`initiallyOwned: true` で所有権を得ていないのに `ReleaseMutex` を呼んでいた。
+      あわせて「既に起動しています」の MessageBox を廃止し、黙って終了する）
+- [x] publish し直して常駐プロセスを v0.7.2 に入れ替え
+- [x] 実機動作確認（時計の表示・二重起動の抑止をユーザーが目視 / 検証コマンドで確認）
 
 ### 積み残し（未着手）
 
