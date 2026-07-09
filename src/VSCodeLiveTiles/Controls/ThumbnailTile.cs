@@ -33,11 +33,14 @@ public sealed class ThumbnailTile : Border
     private static readonly Brush PermissionFg = new SolidColorBrush(PermissionColor);
     private static readonly Brush DoneFg = new SolidColorBrush(Color.FromRgb(0x98, 0xC3, 0x79));
     private static readonly Brush WorkingFg = new SolidColorBrush(Color.FromRgb(0x61, 0xAF, 0xEF));
+    // セッション時計（開始時刻 ▸ 経過）。バッジより一段控えめに出す
+    private static readonly Brush ClockFg = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0xA2));
 
     private readonly string[] _captionSuffixes;
     private readonly Border _contentArea;
     private readonly Border _captionBar;
     private readonly TextBlock _caption;
+    private readonly TextBlock _clock;
     private readonly TextBlock _badge;
     private readonly TextBlock _placeholder;
 
@@ -45,7 +48,8 @@ public sealed class ThumbnailTile : Border
     private bool _isActive;
     private CcState _ccState = CcState.None;
     private DateTime _ccSince;
-    private bool _ccAcknowledged; // 待ちを一度見に行ったか（グローを止める根拠）
+    private DateTime? _ccStarted;  // セッション開始時刻（不明なら null＝時計を出さない）
+    private bool _ccAcknowledged;  // 待ちを一度見に行ったか（グローを止める根拠）
     private SolidColorBrush? _glowBrush; // 待ちグロー用（Opacity をアニメーションするため非 Freeze）
 
     public IntPtr Handle { get; private set; }
@@ -56,6 +60,9 @@ public sealed class ThumbnailTile : Border
 
     /// <summary>質問待ち・承認待ちか（経過時間タイマーの稼働判定に使う）。</summary>
     public bool IsCcWaiting => _ccState is CcState.WaitingQuestion or CcState.WaitingPermission;
+
+    /// <summary>セッション時計を出しているか（経過時間タイマーの稼働判定に使う）。</summary>
+    public bool HasSessionClock => _ccStarted.HasValue;
 
     /// <summary>
     /// 未確認の待ちか。CC には「承認した瞬間」に発火するフックがなく、承認待ちが解除されるのは
@@ -111,6 +118,13 @@ public sealed class ThumbnailTile : Border
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        _clock = new TextBlock
+        {
+            FontSize = 16,
+            Margin = new Thickness(0, 3, 12, 3),
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
         _badge = new TextBlock
         {
             FontSize = 20,
@@ -118,12 +132,16 @@ public sealed class ThumbnailTile : Border
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
         };
+        // キャプションだけを可変幅にして、時計とバッジは実寸で右端に固定する
         var captionRow = new Grid();
         captionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         captionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        captionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetColumn(_caption, 0);
-        Grid.SetColumn(_badge, 1);
+        Grid.SetColumn(_clock, 1);
+        Grid.SetColumn(_badge, 2);
         captionRow.Children.Add(_caption);
+        captionRow.Children.Add(_clock);
         captionRow.Children.Add(_badge);
         _captionBar = new Border { Background = CaptionBg, Child = captionRow };
         Grid.SetRow(_captionBar, 1);
@@ -174,6 +192,7 @@ public sealed class ThumbnailTile : Border
         }
 
         UpdateBadge(); // バッジ配色はアクティブ状態に依存する（青帯では白・太字）
+        UpdateClock();
     }
 
     /// <summary>
@@ -204,25 +223,52 @@ public sealed class ThumbnailTile : Border
         _glowBrush = null;
     }
 
-    /// <summary>CC 状態を設定してバッジ・枠グローを更新する（MainWindow が配布）。</summary>
-    public void SetCcState(CcState state, DateTime since)
+    /// <summary>CC 状態を設定してバッジ・枠グロー・セッション時計を更新する（MainWindow が配布）。</summary>
+    public void SetCcState(CcState state, DateTime since, DateTime? started)
     {
-        if (_ccState == state && _ccSince == since)
+        if (_ccState == state && _ccSince == since && _ccStarted == started)
             return;
         _ccState = state;
         _ccSince = since;
+        _ccStarted = started;
         // 新しい待ちは未確認から始める。ただし既に前面なら目の前に出ているので確認済み扱い。
         // 非アクティブ化ではリセットしない（承認直後に離れると明滅がぶり返すため）。
         _ccAcknowledged = IsCcWaiting && _isActive;
         UpdateBadge();
-        ApplyHighlight();
+        ApplyHighlight(); // 中で UpdateClock も呼ばれる
     }
 
-    /// <summary>待ちバッジの経過時間表示を更新する（MainWindow の 1 秒タイマーから呼ばれる）。</summary>
-    public void RefreshBadgeClock()
+    /// <summary>待ちバッジとセッション時計の経過表示を更新する（MainWindow の 1 秒タイマーから呼ばれる）。</summary>
+    public void RefreshElapsed()
     {
         if (IsCcWaiting)
             UpdateBadge();
+        if (HasSessionClock)
+            UpdateClock();
+    }
+
+    /// <summary>
+    /// 「開始時刻 ▸ 経過」を出す。経過は分単位でしか変わらないので、
+    /// 毎秒呼ばれても文字列が同じなら再描画させない。
+    /// </summary>
+    private void UpdateClock()
+    {
+        if (_ccStarted is not { } started)
+        {
+            _clock.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var elapsed = DateTime.Now - started;
+        if (elapsed < TimeSpan.Zero)
+            elapsed = TimeSpan.Zero;
+
+        var text = $"{started:HH:mm} ▸ {(int)elapsed.TotalHours}:{elapsed.Minutes:00}";
+        if (_clock.Text != text)
+            _clock.Text = text;
+
+        _clock.Foreground = _isActive ? ActiveCaptionFg : ClockFg;
+        _clock.Visibility = Visibility.Visible;
     }
 
     private void UpdateBadge()

@@ -119,21 +119,24 @@ public sealed class MainWindow : Window
         }
     }
 
-    /// <summary>各タイルへ代表状態を配布し、待ちタイルの有無で経過時間タイマーを回す/止める。</summary>
+    /// <summary>
+    /// 各タイルへ代表状態を配布し、経過表示（待ちバッジ・セッション時計）を持つタイルの
+    /// 有無で 1 秒タイマーを回す/止める。
+    /// </summary>
     private void ApplyCcStates()
     {
         if (_ccTracker is null)
             return;
 
-        bool anyWaiting = false;
+        bool anyElapsed = false;
         foreach (var tile in _tiles.Values)
         {
             var resolved = _ccTracker.Resolve(tile.CaptionText);
-            tile.SetCcState(resolved?.State ?? CcState.None, resolved?.Since ?? default);
-            anyWaiting |= tile.IsCcWaiting;
+            tile.SetCcState(resolved?.State ?? CcState.None, resolved?.Since ?? default, resolved?.Started);
+            anyElapsed |= tile.IsCcWaiting || tile.HasSessionClock;
         }
 
-        if (anyWaiting)
+        if (anyElapsed)
         {
             if (_badgeTimer is null)
             {
@@ -144,7 +147,7 @@ public sealed class MainWindow : Window
                 _badgeTimer.Tick += (_, _) =>
                 {
                     foreach (var tile in _tiles.Values)
-                        tile.RefreshBadgeClock();
+                        tile.RefreshElapsed();
                 };
             }
             _badgeTimer.Start();

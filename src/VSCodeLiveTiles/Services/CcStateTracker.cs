@@ -35,6 +35,7 @@ public sealed class CcStateTracker
         public CcState State;
         public long SinceTs;   // 現在の状態に遷移したイベントの ts（経過時間表示の基準）
         public long LastTs;    // 最終イベントの ts（鮮度切れ判定）
+        public long StartTs;   // session_start の ts（0 = 不明。ローテーションで流れた場合）
         public string? FolderName;
         public string? ProjectName;
     }
@@ -88,6 +89,16 @@ public sealed class CcStateTracker
             }
 
             s.LastTs = ts;
+
+            // 開始時刻は最初に観測した session_start を採用する。
+            // resume では session_start が再発火するが、そこで上書きすると
+            // 「そのウィンドウで作業を始めた時刻」より新しくなってしまう
+            if (r.Type == "session_start" && s.StartTs == 0)
+            {
+                s.StartTs = ts;
+                changed = true;
+            }
+
             if (r.Cwd is not null)
                 s.FolderName = SafeBaseName(r.Cwd);
             if (r.ProjectName is not null)
@@ -127,8 +138,9 @@ public sealed class CcStateTracker
     /// タイルのキャプション（サフィックス除去後）に対応する代表状態を返す。
     /// 照合はキャプションが cwd の basename（補助: projectName）で終わるか（SPEC §4）。
     /// マッチなし・None のみなら null（バッジなし）。
+    /// Started は代表セッションの開始時刻（session_start を観測できなければ null）。
     /// </summary>
-    public (CcState State, DateTime Since)? Resolve(string strippedCaption)
+    public (CcState State, DateTime Since, DateTime? Started)? Resolve(string strippedCaption)
     {
         Session? best = null;
         foreach (var s in _sessions.Values)
@@ -143,7 +155,10 @@ public sealed class CcStateTracker
 
         if (best is null)
             return null;
-        return (best.State, DateTimeOffset.FromUnixTimeMilliseconds(best.SinceTs).LocalDateTime);
+        return (
+            best.State,
+            DateTimeOffset.FromUnixTimeMilliseconds(best.SinceTs).LocalDateTime,
+            best.StartTs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(best.StartTs).LocalDateTime : null);
     }
 
     private static bool Matches(string caption, Session s)

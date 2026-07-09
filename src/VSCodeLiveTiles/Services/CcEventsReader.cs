@@ -26,6 +26,11 @@ public sealed class CcEventsReader : IDisposable
 {
     private const int TailBytes = 512 * 1024;
     private const int PollIntervalMs = 1000;
+    private const int ScanChunkBytes = 1024 * 1024;
+    private const int MaxCarryBytes = 4 * 1024 * 1024; // 改行が来ない異常行の保険
+
+    /// <summary>session_start 行だけを拾うためのバイト列。JSON パース前にふるいにかける。</summary>
+    private static readonly byte[] SessionStartMarker = Encoding.UTF8.GetBytes("\"session_start\"");
 
     private readonly string _file;
     private readonly Dispatcher _dispatcher;
@@ -102,8 +107,63 @@ public sealed class CcEventsReader : IDisposable
         _pollTimer.Tick += (_, _) => Drain();
         _pollTimer.Start();
 
+        // セッション開始時刻だけは末尾 512KB の外にあることが多いので、全体から先に拾う。
+        // 状態は続く Drain（tail）が上書きするため、この順番でなければならない。
+        var starts = ScanSessionStarts();
+        if (starts.Count > 0)
+            Received?.Invoke(starts);
+
         Drain();
         return true;
+    }
+
+    /// <summary>
+    /// ファイル全体を走査して session_start 行だけを返す（追記順）。
+    /// 状態の再構築は末尾 512KB で足りるが、セッション開始時刻はそこに含まれないことが多い
+    /// （実測 2026-07-09: 生存セッション 6 件中 5 件が範囲外）。
+    /// JSON パースは該当行だけなので、数十 MB でも走査は一瞬で終わる。
+    /// </summary>
+    private List<CcEventRecord> ScanSessionStarts()
+    {
+        var found = new List<CcEventRecord>();
+        try
+        {
+            using var fs = OpenShared();
+            var buf = new byte[ScanChunkBytes];
+            var carry = Array.Empty<byte>();
+
+            int n;
+            while ((n = fs.Read(buf, 0, buf.Length)) > 0)
+            {
+                var chunk = new byte[carry.Length + n];
+                carry.CopyTo(chunk, 0);
+                buf.AsSpan(0, n).CopyTo(chunk.AsSpan(carry.Length));
+
+                int lineStart = 0;
+                for (int i = 0; i < chunk.Length; i++)
+                {
+                    if (chunk[i] != '\n')
+                        continue;
+                    var line = chunk.AsSpan(lineStart, i - lineStart);
+                    if (line.IndexOf(SessionStartMarker) >= 0)
+                    {
+                        var record = ParseLine(line);
+                        if (record is not null && record.Type == "session_start")
+                            found.Add(record);
+                    }
+                    lineStart = i + 1;
+                }
+
+                carry = lineStart >= chunk.Length ? Array.Empty<byte>() : chunk[lineStart..];
+                if (carry.Length > MaxCarryBytes)
+                    carry = Array.Empty<byte>(); // 壊れた行は捨てる（session_start 行は小さい）
+            }
+        }
+        catch
+        {
+            // 走査できなくても状態追跡は続ける（開始時刻が出ないだけ）
+        }
+        return found;
     }
 
     private FileStream OpenShared()
