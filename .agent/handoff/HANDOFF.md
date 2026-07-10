@@ -170,3 +170,6 @@ Claude Code（VSCode 拡張 / Fable 5）
 - `PostToolUseFailure` フックは settings.json 変更後の新規 CC セッションから有効。
   既存セッションでは発火しない可能性がある
 - しきい値 `SilentAge`（1h）はハードコード。不満が出たら appsettings 化を検討
+- **CCPet プロジェクトはクローズ済み**（とも談）。append-event.mjs への変更は CCPet 側で
+  コミットされない前提。フックスクリプトはこのリポジトリへ取り込むのが正道
+  （Phase 5「CC フックの同梱」の重要度が上がった）
