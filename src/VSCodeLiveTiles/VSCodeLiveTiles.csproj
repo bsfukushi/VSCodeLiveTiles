@@ -9,7 +9,7 @@
     <RootNamespace>VSCodeLiveTiles</RootNamespace>
     <AssemblyName>VSCodeLiveTiles</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.8.5</Version>
+    <Version>0.9.0</Version>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 

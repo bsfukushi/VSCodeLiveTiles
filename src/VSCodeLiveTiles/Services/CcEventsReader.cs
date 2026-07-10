@@ -72,10 +72,10 @@ public sealed class CcEventsReader : IDisposable
 
     private static string ResolveEventsFile()
     {
-        var fromEnv = Environment.GetEnvironmentVariable("CCPET_EVENTS_FILE");
+        var fromEnv = Environment.GetEnvironmentVariable("VSCODE_LIVE_TILES_EVENTS_FILE");
         if (!string.IsNullOrWhiteSpace(fromEnv) && Path.IsPathRooted(fromEnv))
             return fromEnv;
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ccpet", "events.jsonl");
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".vscode-live-tiles", "events.jsonl");
     }
 
     /// <summary>

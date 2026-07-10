@@ -5,7 +5,7 @@
 
 ## バージョン
 
-> **現在: v0.8.5**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.9.0**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -117,15 +117,19 @@
 
 - [x] LICENSE 追加（MIT。README にもライセンス欄を追記 2026-07-10）
 - [ ] .NET 10 LTS へ移行（net8.0 は 2026-11 EOL）＋ self-contained 発行（単体 exe 約70MB）
-- [ ] CC フックの同梱＋セットアップ手段（現状 CCPet の `append-event.mjs` 前提で同梱なし。
-      バッジ機能＝一番の差別化が一般環境で体験されない。**配布成否を分ける最重要項目**。
-      CCPet はクローズ済み（2026-07-10）のため、スクリプトをこのリポジトリへ取り込み、
-      自分の settings.json の参照先も切り替える — 自分自身が最初の移行テストになる）
-- [ ] **events.jsonl が無限に育つ**（2026-07-10 時点で 42MB / 6,151 行。`events.jsonl.1` は
-      2026-07-07 で止まっており、CCPet クローズ後はローテーションする者がいない）。
-      起動時の全体走査がサイズに比例して重くなる。追記直後の open スキャンは
-      v0.8.4 のハンドル常時保持で踏まなくなったが、ファイル自体の肥大は残っている。
-      フック同梱と同時に、自前でサイズ上限・ローテーションを持つ
+- [x] v0.9.0 CC フックの同梱＋セットアップ手段（`hooks/append-event.mjs` を取り込み、
+      `hooks/install.mjs` で settings.json へ自動登録 — 既存の append-event 登録を置き換え、
+      他フックは保全、バックアップ付き、--dry-run あり。既定パスは
+      `~/.vscode-live-tiles/events.jsonl`（env: `VSCODE_LIVE_TILES_EVENTS_FILE`）に新設し、
+      C# 側の既定も変更。自分の settings.json を移行して最初の移行テスト済み —
+      既存セッションも次のフック発火から新設定を拾うことを実測で確認）
+- [x] v0.9.0 **events.jsonl の肥大を根治**。真犯人はローテーション不在ではなく
+      「フックが hook payload を丸ごと書いていたこと」（1 行最大 635KB。ウィジェットが
+      payload から読むのは background_tasks の status だけ）。同梱版フックで記録を
+      ts/type/sessionId/projectName/cwd＋stop の background_tasks(status のみ) に痩身
+      （約 200B/行 ≒ 1/100 以下）。保険として 5MB 上限・1 世代ローテーションをフック側に実装
+      （Windows の rename 先存在エラー対応・並列セッション競合は握りつぶしで安全。
+      読み取り側は v0.8.4 の Renamed/Created 開き直しがそのまま追従、C# 変更ゼロ）
 - [ ] README 英語版＋「ネットワーク通信ゼロ・テレメトリゼロ・読み取り専用」の明記
 - [ ] 実測メモリ（Working Set）・CPU 負荷を README に記載（常駐ツールの最初の質問対策）
 
