@@ -141,7 +141,9 @@ public static class NativeWindows
     }
 
     /// <summary>
-    /// 対象ウィンドウを指定モニター矩形（作業領域）へ移動して最大化・最前面化する。
+    /// 対象ウィンドウを指定モニター矩形（作業領域）で最大化・最前面化する。
+    /// すでに対象モニターに居る場合は移動をスキップし、最大化済みなら前面化だけにする
+    /// （不要な 復元→移動→最大化 を挟むと画面がズレながら再描画されて見える）。
     /// 相手の UI スレッドが詰まっていても呼び出し元をブロックしないよう、
     /// 復元・移動・最大化はすべて非同期（相手のキューに積むだけ）で行う。
     /// キューは順番どおり処理されるので 復元→移動→最大化 の順序は保たれる。
@@ -151,23 +153,84 @@ public static class NativeWindows
         if (hWnd == IntPtr.Zero)
             return;
 
-        // 最大化状態だと SetWindowPos で別モニターへ移動できないので一旦 Restore
-        if (IsIconic(hWnd) || IsZoomed(hWnd))
-            ShowWindowAsync(hWnd, SW_RESTORE);
+        var targetMonitor = MonitorFromPoint(
+            new POINT { X = monitorX + monitorWidth / 2, Y = monitorY + monitorHeight / 2 },
+            MONITOR_DEFAULTTONEAREST);
 
-        // 対象モニターの左上へ移動（サイズは仮。直後に最大化するので概算でよい）
-        SetWindowPos(hWnd, HWND_TOP, monitorX, monitorY,
-            Math.Max(400, monitorWidth / 2), Math.Max(300, monitorHeight / 2),
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
+        // 最小化中は現在座標が画面外（-32000）なので、復元先（通常時の矩形）でモニターを判定する
+        bool minimized = IsIconic(hWnd);
+        var currentMonitor = minimized
+            ? GetRestoreMonitor(hWnd)
+            : MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST);
 
-        // そのモニター上で最大化
-        ShowWindowAsync(hWnd, SW_MAXIMIZE);
+        if (currentMonitor == targetMonitor)
+        {
+            // 対象モニターに居る → 移動不要。最大化済みなら前面化だけ（タスクバー切替と同じ見え方）
+            if (minimized || !IsZoomed(hWnd))
+                ShowWindowAsync(hWnd, SW_MAXIMIZE);
+        }
+        else
+        {
+            // 別モニターに居る → 最大化状態だと SetWindowPos で移動できないので一旦 Restore
+            if (minimized || IsZoomed(hWnd))
+                ShowWindowAsync(hWnd, SW_RESTORE);
+
+            // 対象モニターの左上へ移動（サイズは仮。直後に最大化するので概算でよい）
+            SetWindowPos(hWnd, HWND_TOP, monitorX, monitorY,
+                Math.Max(400, monitorWidth / 2), Math.Max(300, monitorHeight / 2),
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
+
+            // そのモニター上で最大化
+            ShowWindowAsync(hWnd, SW_MAXIMIZE);
+        }
 
         // クリック直後はこのプロセスがフォアグラウンドなので、素の SetForegroundWindow が通る
         // （AttachThreadInput は相手スレッドが詰まると自分の入力処理まで停止するため使わない）
         SetForegroundWindow(hWnd);
     }
 
+    /// <summary>最小化中のウィンドウが復元されるはずのモニター（通常時矩形の中心で判定）。</summary>
+    private static IntPtr GetRestoreMonitor(IntPtr hWnd)
+    {
+        var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+        if (!GetWindowPlacement(hWnd, ref wp))
+            return IntPtr.Zero;
+        var center = new POINT
+        {
+            X = (wp.rcNormalPosition.Left + wp.rcNormalPosition.Right) / 2,
+            Y = (wp.rcNormalPosition.Top + wp.rcNormalPosition.Bottom) / 2,
+        };
+        return MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
+    }
+
     [DllImport("user32.dll")]
     private static extern bool IsZoomed(IntPtr hWnd);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WINDOWPLACEMENT
+    {
+        public int length;
+        public uint flags;
+        public int showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
 }
