@@ -138,8 +138,13 @@
       （約 200B/行 ≒ 1/100 以下）。保険として 5MB 上限・1 世代ローテーションをフック側に実装
       （Windows の rename 先存在エラー対応・並列セッション競合は握りつぶしで安全。
       読み取り側は v0.8.4 の Renamed/Created 開き直しがそのまま追従、C# 変更ゼロ）
-- [ ] README 英語版＋「ネットワーク通信ゼロ・テレメトリゼロ・読み取り専用」の明記
-- [ ] 実測メモリ（Working Set）・CPU 負荷を README に記載（常駐ツールの最初の質問対策）
+- [x] README 英語版（README.en.md 全訳・相互リンク付き）＋「ネットワーク通信ゼロ・
+      テレメトリゼロ・読み取り専用」を日英両方に「セキュリティ・プライバシー」節として明記
+- [x] 実測メモリ（Working Set）・CPU 負荷を README に記載（v0.10.0 実測:
+      framework-dependent 起動直後 140MB / 常用中 180MB、self-contained 単体 243MB、
+      CPU 60 秒平均 0.05%（16 コア換算））
+
+**Phase 5 はこれで全項目完了**（GitHub Releases / winget は Phase 6）
 
 ## Phase 6: 間口拡大
 

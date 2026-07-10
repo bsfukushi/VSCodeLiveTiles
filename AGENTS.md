@@ -11,7 +11,7 @@
 |---|---|
 | アプリ名 | VSCode Live Tiles（VSCode ライブタイル） |
 | 種別 | Windows デスクトップウィジェット（常駐ランチャー） |
-| 主要技術 | C# / WPF / .NET 8（net8.0-windows） |
+| 主要技術 | C# / WPF / .NET 10（net10.0-windows） |
 | コア技術 | DWM Thumbnail API・WinEvent Hook・Win32 P/Invoke |
 | 対象ユーザー | 開発者本人（一人用ツール） |
 
@@ -22,7 +22,7 @@
 
 ## 技術スタック
 
-- .NET 8（開発 SDK は 8/9/10 いずれでも可）、WPF（`UseWPF`）
+- .NET 10（開発 SDK は 8/9/10 いずれでも可）、WPF（`UseWPF`）
 - Nullable enable / ImplicitUsings enable
 - UI はコードベース（XAML は App.xaml のみ、ウィンドウ・コントロールは C# で構築）
 - 外部 NuGet 依存なし（Win32 API は自前 P/Invoke: `Interop/`）
@@ -102,4 +102,4 @@ src/VSCodeLiveTiles/
 
 ---
 
-_最終更新：2026-07-07_
+_最終更新：2026-07-10_
