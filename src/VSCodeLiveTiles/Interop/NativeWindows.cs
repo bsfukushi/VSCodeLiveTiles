@@ -144,9 +144,14 @@ public static class NativeWindows
     /// 対象ウィンドウを指定モニター矩形（作業領域）で最大化・最前面化する。
     /// すでに対象モニターに居る場合は移動をスキップし、最大化済みなら前面化だけにする
     /// （不要な 復元→移動→最大化 を挟むと画面がズレながら再描画されて見える）。
-    /// 相手の UI スレッドが詰まっていても呼び出し元をブロックしないよう、
     /// 復元・移動・最大化はすべて非同期（相手のキューに積むだけ）で行う。
     /// キューは順番どおり処理されるので 復元→移動→最大化 の順序は保たれる。
+    ///
+    /// ただし末尾の <see cref="SetForegroundWindow"/> だけは相手スレッドの
+    /// アクティベーション処理を待つ同期呼び出しで、相手が固まっていると Windows の
+    /// ハングアプリ判定（5 秒）まで戻ってこない。
+    /// <b>UI スレッドから呼んではならない</b>（呼ぶとウィジェット自身が「応答なし」の
+    /// ゴーストウィンドウに置き換わる。v0.8.1）。
     /// </summary>
     public static void MoveMaximizeAndFocus(IntPtr hWnd, int monitorX, int monitorY, int monitorWidth, int monitorHeight)
     {
@@ -185,9 +190,17 @@ public static class NativeWindows
         }
 
         // クリック直後はこのプロセスがフォアグラウンドなので、素の SetForegroundWindow が通る
-        // （AttachThreadInput は相手スレッドが詰まると自分の入力処理まで停止するため使わない）
+        // （AttachThreadInput は相手スレッドが詰まると自分の入力処理まで停止するため使わない）。
+        // 待たされた事実はログに残す — 相手が固まっていたことの唯一の証拠になる
+        var sw = Stopwatch.StartNew();
         SetForegroundWindow(hWnd);
+        sw.Stop();
+        if (sw.ElapsedMilliseconds >= SlowForegroundMs)
+            Log.Warn($"SetForegroundWindow が {sw.ElapsedMilliseconds} ms 待たされました（hwnd=0x{hWnd:X}・相手プロセスが応答していません）");
     }
+
+    /// <summary>この時間以上 SetForegroundWindow が返らなければ、相手が詰まっているとみなして記録する。</summary>
+    private const int SlowForegroundMs = 200;
 
     /// <summary>最小化中のウィンドウが復元されるはずのモニター（通常時矩形の中心で判定）。</summary>
     private static IntPtr GetRestoreMonitor(IntPtr hWnd)

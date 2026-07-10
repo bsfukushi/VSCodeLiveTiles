@@ -307,10 +307,26 @@ public sealed class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// タイルのクリック。切り替え自体は UI スレッドで待たない。
+    /// 末尾の SetForegroundWindow は相手（VSCode）が固まっていると 5 秒戻ってこず、
+    /// UI スレッドで待つとウィジェット自身がゴーストウィンドウに置き換わるため
+    /// （v0.8.1。フォアグラウンド化の権利はプロセス単位なので別スレッドでも通る）。
+    /// </summary>
     private void OnTileClicked(IntPtr handle)
     {
         var t = _monitors.GetTargetMonitor(_config.TargetMonitorIndex);
-        NativeWindows.MoveMaximizeAndFocus(handle, t.WorkLeft, t.WorkTop, t.WorkWidth, t.WorkHeight);
+        Task.Run(() =>
+        {
+            try
+            {
+                NativeWindows.MoveMaximizeAndFocus(handle, t.WorkLeft, t.WorkTop, t.WorkWidth, t.WorkHeight);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"ウィンドウ切り替えに失敗（hwnd=0x{handle:X}）", ex);
+            }
+        });
     }
 
     protected override void OnClosed(EventArgs e)
