@@ -5,7 +5,7 @@
 
 ## バージョン
 
-> **現在: v0.7.4**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.7.5**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -71,11 +71,14 @@
 
 > 配布しなくても自分が得をする改善。旧「積み残し」2件もここに吸収。
 
-- [ ] 死んだセッションが `WaitingPermission` のまま残ると 24 時間そのタイルが承認待ちに固定される
-      → `Resolve` で「一定時間更新のないセッションを代表選出から外す」。
-      あわせて `PurgeStale` がイベント駆動のみ（イベントが来ないと掃除されない）なのを時間駆動に
-- [ ] `PostToolUseFailure` を拾っていないため、ツール失敗・拒否時に承認待ちが残る
-      （次のツール実行で自然回復するので実害は小さい）
+- [x] v0.7.5 死んだセッションが `WaitingPermission` のまま残ると 24 時間そのタイルが承認待ちに固定される
+      （`Resolve` で 1 時間イベントの無い作業中・待ちセッションを代表選出から除外。
+      完了は過去の事実＋セッション時計保持のため残す。あわせて MainWindow に 1 分間隔の
+      掃除タイマーを追加し、`PurgeStale` をイベント駆動→時間駆動に）
+- [x] v0.7.5 `PostToolUseFailure` を拾っていないため、ツール失敗・拒否時に承認待ちが残る
+      （3 点セットで配線: settings.json に PostToolUseFailure フック登録 /
+      CCPet append-event.mjs の VALID_TYPES に post_tool_use_failure 追加 /
+      CcStateTracker で Working にマッピング。CCPet 本体は未対応だが invalid_type スキップで無害）
 - [ ] 未処理例外ハンドラ（`DispatcherUnhandledException` / `AppDomain.UnhandledException`）
       → 黙って消えるのをやめ、クラッシュログを残す
 - [ ] 軽量ログ機構（`%LOCALAPPDATA%\VSCodeLiveTiles\logs\`。例外＋起動時の環境サマリーのみ）

@@ -30,6 +30,14 @@ public sealed class CcStateTracker
     /// <summary>クラッシュ等で session_end が来ないセッションの掃除しきい値。</summary>
     private static readonly TimeSpan StaleAge = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// 代表選出の鮮度しきい値。作業中・待ちは「現在進行」の主張なので、
+    /// これを超えてイベントの無いセッションは死んでいるとみなして選出から外す。
+    /// 完了は過去の事実であり、生きた待ち・作業中には優先度で必ず負けるため外さない
+    /// （アイドル中のセッション時計を消さないためでもある）。
+    /// </summary>
+    private static readonly TimeSpan SilentAge = TimeSpan.FromHours(1);
+
     private sealed class Session
     {
         public CcState State;
@@ -121,9 +129,16 @@ public sealed class CcStateTracker
         "stop" => r.HasRunningBackgroundTasks ? CcState.Working : CcState.Done,
         "user_prompt_submit" => CcState.Working,
         "post_tool_use" => CcState.Working,               // AUQ 回答後・承認後の解除もこれで拾える
+        "post_tool_use_failure" => CcState.Working,       // 失敗・拒否後も CC は続行する（承認待ちの解除）
         "session_start" => CcState.None,
         _ => null,
     };
+
+    /// <summary>
+    /// 時間駆動の掃除。イベントが来ない限り Apply が呼ばれず死んだセッションが
+    /// 残り続けるため、MainWindow のタイマーから定期的に呼ぶ（呼び出し後に再配布すること）。
+    /// </summary>
+    public void Sweep() => PurgeStale();
 
     private bool PurgeStale()
     {
@@ -142,10 +157,13 @@ public sealed class CcStateTracker
     /// </summary>
     public (CcState State, DateTime Since, DateTime? Started)? Resolve(string strippedCaption)
     {
+        long silentThreshold = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)SilentAge.TotalMilliseconds;
         Session? best = null;
         foreach (var s in _sessions.Values)
         {
             if (s.State == CcState.None)
+                continue;
+            if (s.State != CcState.Done && s.LastTs < silentThreshold)
                 continue;
             if (!Matches(strippedCaption, s))
                 continue;

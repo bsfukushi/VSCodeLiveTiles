@@ -33,6 +33,7 @@ public sealed class MainWindow : Window
     private CcEventsReader? _ccReader;
     private CcStateTracker? _ccTracker;
     private System.Windows.Threading.DispatcherTimer? _badgeTimer;
+    private System.Windows.Threading.DispatcherTimer? _ccSweepTimer;
 
     // handle → タイル。thumbs: source handle → DWM サムネイル ID（最小化中は登録しない）
     private readonly Dictionary<IntPtr, ThumbnailTile> _tiles = new();
@@ -110,10 +111,25 @@ public sealed class MainWindow : Window
             }
             _ccTracker = tracker;
             _ccReader = reader;
+
+            // 死んだセッションの掃除と鮮度切れの反映は時間経過で起きる（イベントが来ない）ため、
+            // イベント駆動の Apply とは別に定期的に回す
+            _ccSweepTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMinutes(1),
+            };
+            _ccSweepTimer.Tick += (_, _) =>
+            {
+                _ccTracker?.Sweep();
+                ApplyCcStates();
+            };
+            _ccSweepTimer.Start();
         }
         catch
         {
             reader?.Dispose();
+            _ccSweepTimer?.Stop();
+            _ccSweepTimer = null;
             _ccReader = null;
             _ccTracker = null;
         }
@@ -297,6 +313,7 @@ public sealed class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _badgeTimer?.Stop();
+        _ccSweepTimer?.Stop();
         _ccReader?.Dispose();
         _tracker?.Dispose();
         foreach (var id in _thumbs.Values)

@@ -128,3 +128,45 @@ Claude Code（VSCode 拡張 / Fable 5）
 ### 注意点・ブロッカー
 - `.spec/TODO.md` の Phase 4〜6 追加と HANDOFF 追記は未コミット
 - push が 403 になったら `gh auth switch --user bsfukushi`
+
+---
+
+## セッション 2026-07-10 14:19
+
+### 使用ツール
+Claude Code（VSCode 拡張 / Fable 5）
+
+### 現在のタスクと進捗
+- [x] 前セッションの未コミット分（TODO.md Phase 4〜6 / HANDOFF）をコミット＆プッシュ
+- [x] v0.7.5 Phase 4 ①② — CC 状態バッジの堅牢化 → リリース・常駐入れ替え済み
+
+### v0.7.5 Phase 4 ①②（死んだセッションの承認待ち固定＋PostToolUseFailure）
+
+- ① 死んだセッションの `WaitingPermission` 固定を解消（`CcStateTracker.cs` / `MainWindow.cs`）:
+  - `Resolve` に鮮度しきい値 `SilentAge`（1 時間）を追加。作業中・待ちは「現在進行」の
+    主張なので、1 時間イベントが無ければ死んだとみなし代表選出から除外。
+    **完了（Done）は除外しない** — 過去の事実で害がなく、アイドル中のセッション時計を
+    消さないため。優先度で生きたセッションに必ず負けるので実害なし
+  - `PurgeStale`（24h 掃除）がイベント駆動のみだったのを時間駆動化:
+    tracker に `Sweep()` を公開し、MainWindow の 1 分間隔 DispatcherTimer から
+    `Sweep()` → `ApplyCcStates()`。鮮度切れの反映もこのタイマーで拾う
+- ② `post_tool_use_failure` を末端まで配線（ツール失敗・拒否時の承認待ち解除）:
+  - `~/.claude/settings.json` に `PostToolUseFailure` フックを登録（新規セッションから有効）
+  - CCPet の `append-event.mjs` VALID_TYPES に追加（フックは src 直呼びなので即有効。
+    CCPet 本体は未対応だが eventsTail が invalid_type としてスキップするだけで無害 —
+    パーサ実装を読んで確認済み。将来対応するなら event.ts の EVENT_TYPES と
+    eventToStateId に追加、と append-event.mjs にコメントで残した）
+  - `CcStateTracker.MapState` に `"post_tool_use_failure" => Working` を追加
+- フック単体テスト済み（CCPET_EVENTS_FILE を scratchpad に向けて 1 行書けることを確認）
+- publish して常駐プロセスを v0.7.5 に入れ替え済み（Working Set 実測 140MB）
+
+### 次のセッションで最初にやること
+1. v0.7.5 の常用観察: 死んだセッションの承認待ちバッジが 1 時間で消えるか /
+   1 時間放置した正当な承認待ちバッジが消える副作用が気になるか（しきい値調整の材料）
+2. Phase 4 残り: 未処理例外ハンドラ＋軽量ログ機構（セットで 1 コミットが自然）、
+   モニター構成変化対応
+
+### 注意点・ブロッカー
+- `PostToolUseFailure` フックは settings.json 変更後の新規 CC セッションから有効。
+  既存セッションでは発火しない可能性がある
+- しきい値 `SilentAge`（1h）はハードコード。不満が出たら appsettings 化を検討
