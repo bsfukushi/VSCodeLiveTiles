@@ -18,10 +18,14 @@ public sealed record CcEventRecord(
 /// 起動時に末尾 512KB を遡って状態を再構築し、以後は FileSystemWatcher ＋
 /// 1 秒間隔の保険ポーリング（WinEvent＋ポーリングと同じ思想）で追記分のみ読む。
 ///
+/// - <b>ファイル操作とパースは必ずバックグラウンドスレッドで行う</b>。
+///   events.jsonl は際限なく育つ（実測 42MB）。追記直後の open はファイル全体が
+///   スキャンされるため、42MB で 140ms、ディスクが混んでいれば数秒かかる（実測）。
+///   これを UI スレッドでやると Windows がウィジェットを「応答なし」と判定する（v0.8.3）
 /// - このクラスはファイルに一切書き込まない（読み取り専用・FileShare.ReadWrite で開く）
 /// - ファイル長がオフセットより短くなったらローテーションとみなし先頭から再読込
 /// - 壊れた行・書き込み途中の行はスキップ（フック側も途中で切れた行はパース側でスキップ前提）
-/// - イベントは UI スレッド（生成元 Dispatcher）で発火する
+/// - 読み取った結果だけを UI スレッド（生成元 Dispatcher）へ渡して <see cref="Received"/> を発火する
 /// </summary>
 public sealed class CcEventsReader : IDisposable
 {
@@ -35,13 +39,17 @@ public sealed class CcEventsReader : IDisposable
 
     private readonly string _file;
     private readonly Dispatcher _dispatcher;
+
+    /// <summary>読み取りを 1 本に直列化する。取れなければ別スレッドが読んでいるので捨てる。</summary>
+    private readonly object _gate = new();
+
     private FileSystemWatcher? _watcher;
-    private DispatcherTimer? _pollTimer;
+    private Timer? _pollTimer;
 
     private long _offset;
     private byte[] _pendingBytes = Array.Empty<byte>(); // 改行未達の行末尾（マルチバイト分断対策でバイトのまま保持）
-    private bool _draining;
-    private bool _disposed;
+    private volatile bool _initialized;
+    private volatile bool _disposed;
 
     /// <summary>新しいイベントを読み取ったときに UI スレッドで発火（追記順）。</summary>
     public event Action<IReadOnlyList<CcEventRecord>>? Received;
@@ -63,31 +71,13 @@ public sealed class CcEventsReader : IDisposable
     /// <summary>
     /// 監視を開始する。フック未導入（ディレクトリ不在）なら false を返し、何もしない。
     /// ファイル自体の不在は「まだイベントがない」だけなので監視は続ける。
+    /// 実際の読み取りはバックグラウンドで走るので、この呼び出しは即座に返る。
     /// </summary>
     public bool Start()
     {
         var dir = Path.GetDirectoryName(_file);
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
             return false;
-
-        // 起動時: 末尾 512KB から状態を再構築
-        if (File.Exists(_file))
-        {
-            try
-            {
-                using var fs = OpenShared();
-                if (fs.Length > TailBytes)
-                {
-                    fs.Position = fs.Length - TailBytes;
-                    SkipToNextLine(fs); // 行の途中（マルチバイトの途中の可能性あり）を読み捨てる
-                }
-                _offset = fs.Position;
-            }
-            catch
-            {
-                _offset = 0;
-            }
-        }
 
         try
         {
@@ -104,18 +94,51 @@ public sealed class CcEventsReader : IDisposable
             _watcher = null; // ポーリングのみで続行
         }
 
-        _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(PollIntervalMs) };
-        _pollTimer.Tick += (_, _) => Drain();
-        _pollTimer.Start();
+        _pollTimer = new Timer(_ => Drain(), null, PollIntervalMs, PollIntervalMs);
 
-        // セッション開始時刻だけは末尾 512KB の外にあることが多いので、全体から先に拾う。
-        // 状態は続く Drain（tail）が上書きするため、この順番でなければならない。
-        var starts = ScanSessionStarts();
-        if (starts.Count > 0)
-            Received?.Invoke(starts);
+        // 起動時の全体走査と初回 tail 読みは、42MB のファイルだと数百 ms かかる。
+        // ウィンドウが出る前の UI スレッドを塞がないよう、初期化ごと逃がす
+        ThreadPool.UnsafeQueueUserWorkItem(static self => self.Initialize(), this, preferLocal: false);
+        return true;
+    }
+
+    /// <summary>
+    /// 末尾 512KB の位置を求め、セッション開始時刻を全体走査で拾う。
+    /// 状態は続く <see cref="Drain"/>（tail）が上書きするため、この順番でなければならない。
+    /// </summary>
+    private void Initialize()
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+                return;
+
+            if (File.Exists(_file))
+            {
+                try
+                {
+                    using var fs = OpenShared();
+                    if (fs.Length > TailBytes)
+                    {
+                        fs.Position = fs.Length - TailBytes;
+                        SkipToNextLine(fs); // 行の途中（マルチバイトの途中の可能性あり）を読み捨てる
+                    }
+                    _offset = fs.Position;
+                }
+                catch
+                {
+                    _offset = 0;
+                }
+            }
+
+            var starts = ScanSessionStarts();
+            if (starts.Count > 0)
+                Publish(starts);
+
+            _initialized = true;
+        }
 
         Drain();
-        return true;
     }
 
     /// <summary>
@@ -180,19 +203,28 @@ public sealed class CcEventsReader : IDisposable
         }
     }
 
-    /// <summary>FileSystemWatcher はスレッドプールで発火するため UI スレッドへ寄せる。</summary>
+    /// <summary>FileSystemWatcher の通知スレッドを塞がないよう、読み取りはワーカーへ投げる。</summary>
     private void RequestDrain()
-        => _dispatcher.BeginInvoke(new Action(Drain), DispatcherPriority.Background);
+    {
+        if (_disposed)
+            return;
+        ThreadPool.UnsafeQueueUserWorkItem(static self => self.Drain(), this, preferLocal: false);
+    }
 
+    /// <summary>
+    /// 追記分を読んでパースし、結果だけを UI スレッドへ渡す。バックグラウンドスレッドで動く。
+    /// 既に別スレッドが読み取り中なら何もしない（取りこぼしは次のポーリングが拾う）。
+    /// </summary>
     private void Drain()
     {
-        if (_disposed || _draining)
+        if (_disposed || !_initialized)
             return;
-        _draining = true;
+        if (!Monitor.TryEnter(_gate))
+            return;
 
         // 遅いときに「どの段階で」を切り分けられるよう、区間ごとに測る
         long started = Stopwatch.GetTimestamp();
-        double msOpen = 0, msRead = 0, msParse = 0, msDispatch = 0;
+        double msOpen = 0, msRead = 0, msParse = 0;
         int bytes = 0, records = 0;
         bool rotated = false;
 
@@ -237,10 +269,8 @@ public sealed class CcEventsReader : IDisposable
             records = parsed.Count;
             msParse = Elapsed(t);
 
-            t = Stopwatch.GetTimestamp();
             if (parsed.Count > 0)
-                Received?.Invoke(parsed);
-            msDispatch = Elapsed(t);
+                Publish(parsed);
         }
         catch
         {
@@ -248,14 +278,32 @@ public sealed class CcEventsReader : IDisposable
         }
         finally
         {
-            _draining = false;
+            Monitor.Exit(_gate);
+
             double total = Elapsed(started);
             if (total >= Log.SlowMs)
             {
-                Log.Warn($"events.jsonl の読み取り {total:F0} ms" +
+                Log.Warn($"events.jsonl の読み取り {total:F0} ms（背景スレッド）" +
                     $"（open {msOpen:F0} / read {msRead:F0} [{bytes:N0}B{(rotated ? " 全読み直し" : "")}]" +
-                    $" / parse {msParse:F0} [{records}件] / 状態配布 {msDispatch:F0}）");
+                    $" / parse {msParse:F0} [{records}件]）");
             }
+        }
+    }
+
+    /// <summary>読み取り結果を UI スレッドへ渡す。呼び出し順（＝追記順）は Dispatcher が保つ。</summary>
+    private void Publish(IReadOnlyList<CcEventRecord> records)
+    {
+        try
+        {
+            _dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!_disposed)
+                    Received?.Invoke(records);
+            }));
+        }
+        catch
+        {
+            // Dispatcher が終了処理に入っている
         }
     }
 
@@ -351,7 +399,7 @@ public sealed class CcEventsReader : IDisposable
         if (_disposed)
             return;
         _disposed = true;
-        _pollTimer?.Stop();
+        _pollTimer?.Dispose();
         _watcher?.Dispose();
     }
 }
