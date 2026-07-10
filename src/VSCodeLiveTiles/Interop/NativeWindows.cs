@@ -43,6 +43,9 @@ public static class NativeWindows
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
+    private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
@@ -50,15 +53,6 @@ public static class NativeWindows
 
     /// <summary>現在の前面ウィンドウのハンドル。</summary>
     public static IntPtr GetForeground() => GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-
-    [DllImport("user32.dll")]
-    private static extern bool BringWindowToTop(IntPtr hWnd);
-
-    [DllImport("kernel32.dll")]
-    private static extern uint GetCurrentThreadId();
 
     // ShowWindow コマンド
     public const int SW_RESTORE = 9;
@@ -70,6 +64,7 @@ public static class NativeWindows
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_SHOWWINDOW = 0x0040;
+    public const uint SWP_ASYNCWINDOWPOS = 0x4000;
     public static readonly IntPtr HWND_TOP = IntPtr.Zero;
 
     // GetWindowLong インデックス / スタイル
@@ -147,7 +142,9 @@ public static class NativeWindows
 
     /// <summary>
     /// 対象ウィンドウを指定モニター矩形（作業領域）へ移動して最大化・最前面化する。
-    /// フォアグラウンド制限を AttachThreadInput で回避する。
+    /// 相手の UI スレッドが詰まっていても呼び出し元をブロックしないよう、
+    /// 復元・移動・最大化はすべて非同期（相手のキューに積むだけ）で行う。
+    /// キューは順番どおり処理されるので 復元→移動→最大化 の順序は保たれる。
     /// </summary>
     public static void MoveMaximizeAndFocus(IntPtr hWnd, int monitorX, int monitorY, int monitorWidth, int monitorHeight)
     {
@@ -156,45 +153,21 @@ public static class NativeWindows
 
         // 最大化状態だと SetWindowPos で別モニターへ移動できないので一旦 Restore
         if (IsIconic(hWnd) || IsZoomed(hWnd))
-            ShowWindow(hWnd, SW_RESTORE);
+            ShowWindowAsync(hWnd, SW_RESTORE);
 
         // 対象モニターの左上へ移動（サイズは仮。直後に最大化するので概算でよい）
         SetWindowPos(hWnd, HWND_TOP, monitorX, monitorY,
             Math.Max(400, monitorWidth / 2), Math.Max(300, monitorHeight / 2),
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
 
         // そのモニター上で最大化
-        ShowWindow(hWnd, SW_MAXIMIZE);
+        ShowWindowAsync(hWnd, SW_MAXIMIZE);
 
-        ForceForeground(hWnd);
+        // クリック直後はこのプロセスがフォアグラウンドなので、素の SetForegroundWindow が通る
+        // （AttachThreadInput は相手スレッドが詰まると自分の入力処理まで停止するため使わない）
+        SetForegroundWindow(hWnd);
     }
 
     [DllImport("user32.dll")]
     private static extern bool IsZoomed(IntPtr hWnd);
-
-    private static void ForceForeground(IntPtr hWnd)
-    {
-        uint foreThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
-        uint thisThread = GetCurrentThreadId();
-        uint targetThread = GetWindowThreadProcessId(hWnd, out _);
-
-        bool attached1 = false, attached2 = false;
-        try
-        {
-            if (foreThread != thisThread)
-                attached1 = AttachThreadInput(thisThread, foreThread, true);
-            if (targetThread != thisThread && targetThread != foreThread)
-                attached2 = AttachThreadInput(thisThread, targetThread, true);
-
-            BringWindowToTop(hWnd);
-            SetForegroundWindow(hWnd);
-        }
-        finally
-        {
-            if (attached1)
-                AttachThreadInput(thisThread, foreThread, false);
-            if (attached2)
-                AttachThreadInput(thisThread, targetThread, false);
-        }
-    }
 }
