@@ -79,3 +79,52 @@ Claude Code（VSCode 拡張 / Fable 5）
 - 常駐 exe は `publish/`、開発ビルドは `bin/` で別物。更新は
   「ウィジェット終了 → `dotnet publish` → 再起動」の順
 - HANDOFF.md / TODO.md / .agent 配下の今日の変更はまだ未コミット
+
+---
+
+## セッション 2026-07-10 13:25
+
+### 使用ツール
+Claude Code（VSCode 拡張 / Fable 5）
+
+### 現在のタスクと進捗
+- [x] v0.7.3〜0.7.4 常用観察の確認 → 「使用感、完璧です」で問題なし確定
+- [x] 一般配布に向けた非機能要件の検証（全ソース約1,500行＋配布物構成を監査）
+- [x] 検証結果を `.spec/TODO.md` に Phase 4〜6 として反映（旧「積み残し」2件は Phase 4 に吸収）
+- [x] 記事ネタ保存（note-articles: 2026-07-10_distribution-audit、freshness: evergreen）
+- [ ] Phase 4 ①②（WaitingPermission 固定解消＋PostToolUseFailure）: 未着手
+
+### 検証レポート要点（詳細は TODO.md Phase 4〜6）
+- **強み（そのまま売りになる）**: ネットワーク通信コードゼロ / NuGet 依存ゼロ /
+  events.jsonl 読み取り専用 / DWM サムネイル・セッション辞書とも対管理でリーク源なし
+- **ブロッカー級**: CC フック（CCPet の append-event.mjs）が同梱されておらず、
+  バッジ機能＝一番の差別化が一般環境で動かない（**配布成否を分ける最重要項目**）/
+  未署名 exe の SmartScreen / LICENSE なし / net8.0 が 2026-11 EOL（.NET 10 LTS へ）
+- **高優先**: 未処理例外ハンドラなし（黙って落ちる）/ ログ機構ゼロ /
+  モニター構成変化未対応（モニター 0 枚で GetWidgetMonitor が throw → 起動クラッシュ経路）/
+  シングルモニター環境で全画面常駐が使い物にならない
+- **メモリ・CPU は健全**: 全走査 24MB/64ms 実測、タイマー類も負荷小。実測 Working Set を
+  README に載せると安心材料になる
+
+### セッションハイライト
+
+- とも: 「このアプリケーションを広くVSCodeでCCを動かしている人に使ってもらいたい」
+  → CC: 個人ツールから一般配布への方針転換。機能追加ではなく非機能要件（セキュリティ・
+  メモリ・堅牢性）の監査を先に実施する流れに
+- とも: 「CCPetの名残が残ってたのね」
+  → CC: 名残というより「フック基盤が CCPet 側にあって同梱されていない」外部依存の構図と整理。
+  監査の最大の発見が「コードの穴」ではなく「一番の差別化機能が外部依存で一般環境では動かない」
+  だった点は象徴的
+- とも: 「シングルモニター対応は、ともさんも思ってました。CCPetみたいに、最前面に常駐する
+  ウインドウで、自由にサイズを変えられる（縦長とか横長とか）タイプにブラッシュアップできたら便利」
+  → CC: ウィンドウモードを Phase 6 筆頭に登録。既存実装が LayoutUpdated / SizeChanged で
+  サムネイル矩形を追従させる作りなので、リサイズ対応は大工事にならない見込み
+
+### 次のセッションで最初にやること
+1. TODO.md / HANDOFF.md の変更をコミット（未コミット）
+2. Phase 4 ①②に着手（WaitingPermission 固定解消＋PostToolUseFailure。
+   `PurgeStale` のイベント駆動→時間駆動化もセットで、CcStateTracker 中心に 1 回で直す）
+
+### 注意点・ブロッカー
+- `.spec/TODO.md` の Phase 4〜6 追加と HANDOFF 追記は未コミット
+- push が 403 になったら `gh auth switch --user bsfukushi`

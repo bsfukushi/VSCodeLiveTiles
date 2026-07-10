@@ -67,9 +67,37 @@
 - [x] publish し直して常駐プロセスを v0.7.4 に入れ替え
 - [x] 実機動作確認（ユーザー確認済み: 「きれいにストレスなく切り替わる」）
 
-### 積み残し（未着手）
+## Phase 4: 品質基盤 — 配布前提の堅牢化（検証レポート 2026-07-10）
+
+> 配布しなくても自分が得をする改善。旧「積み残し」2件もここに吸収。
 
 - [ ] 死んだセッションが `WaitingPermission` のまま残ると 24 時間そのタイルが承認待ちに固定される
-      → `Resolve` で「一定時間更新のないセッションを代表選出から外す」
+      → `Resolve` で「一定時間更新のないセッションを代表選出から外す」。
+      あわせて `PurgeStale` がイベント駆動のみ（イベントが来ないと掃除されない）なのを時間駆動に
 - [ ] `PostToolUseFailure` を拾っていないため、ツール失敗・拒否時に承認待ちが残る
       （次のツール実行で自然回復するので実害は小さい）
+- [ ] 未処理例外ハンドラ（`DispatcherUnhandledException` / `AppDomain.UnhandledException`）
+      → 黙って消えるのをやめ、クラッシュログを残す
+- [ ] 軽量ログ機構（`%LOCALAPPDATA%\VSCodeLiveTiles\logs\`。例外＋起動時の環境サマリーのみ）
+- [ ] モニター構成変化対応（`SystemEvents.DisplaySettingsChanged` で再配置。
+      モニター 0 枚（RDP 切断中など）で `GetWidgetMonitor` が throw → 起動クラッシュする経路を塞ぐ）
+
+## Phase 5: 配布準備
+
+- [ ] LICENSE 追加（MIT 想定。公開済みリポジトリなので早めに）
+- [ ] .NET 10 LTS へ移行（net8.0 は 2026-11 EOL）＋ self-contained 発行（単体 exe 約70MB）
+- [ ] CC フックの同梱＋セットアップ手段（現状 CCPet の `append-event.mjs` 前提で同梱なし。
+      バッジ機能＝一番の差別化が一般環境で体験されない。**配布成否を分ける最重要項目**）
+- [ ] README 英語版＋「ネットワーク通信ゼロ・テレメトリゼロ・読み取り専用」の明記
+- [ ] 実測メモリ（Working Set）・CPU 負荷を README に記載（常駐ツールの最初の質問対策）
+
+## Phase 6: 間口拡大
+
+- [ ] **ウィンドウモード**（とも要望 2026-07-10）: 全画面常駐をやめ、CCPet のような
+      最前面・自由リサイズのウィンドウに。縦長→1列 / 横長→1行 など縦横比でグリッド自動調整。
+      シングルモニター環境（一般ユーザーの過半）への対応がこれで解決する
+- [ ] VSCode 派生対応: `Code - Insiders` / `Cursor` / `VSCodium` を既定の
+      `targetProcessNames` / `captionSuffixesToStrip` に追加
+- [ ] UI 文字列の英語化（「最小化中」「質問/承認/完了/作業中」等のハードコード解消）
+- [ ] 右クリックメニューに「終了」（現状 Alt+F4 のみ）
+- [ ] GitHub Releases でバイナリ配布 ＋ winget マニフェスト登録（未署名 SmartScreen 対策の現実解）
