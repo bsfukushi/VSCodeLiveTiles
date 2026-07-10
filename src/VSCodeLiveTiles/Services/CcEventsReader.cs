@@ -19,9 +19,13 @@ public sealed record CcEventRecord(
 /// 1 秒間隔の保険ポーリング（WinEvent＋ポーリングと同じ思想）で追記分のみ読む。
 ///
 /// - <b>ファイル操作とパースは必ずバックグラウンドスレッドで行う</b>。
-///   events.jsonl は際限なく育つ（実測 42MB）。追記直後の open はファイル全体が
-///   スキャンされるため、42MB で 140ms、ディスクが混んでいれば数秒かかる（実測）。
+///   events.jsonl は際限なく育つ（実測 46MB）。追記直後の open はファイル全体が
+///   スキャンされるため、46MB で 200ms〜20 秒かかる（実測。サイズに比例して悪化）。
 ///   これを UI スレッドでやると Windows がウィジェットを「応答なし」と判定する（v0.8.3）
+/// - <b>ファイルハンドルは開きっぱなしにする</b>。open のコストは「追記後に開き直す」ときだけ
+///   発生するので、掴み続ければそもそも踏まない。ローテーション（truncate）は同一ハンドルの
+///   長さの縮みで検知でき、差し替え・削除は FileSystemWatcher の Created/Deleted/Renamed で
+///   ハンドルを開き直す（v0.8.4）
 /// - このクラスはファイルに一切書き込まない（読み取り専用・FileShare.ReadWrite で開く）
 /// - ファイル長がオフセットより短くなったらローテーションとみなし先頭から再読込
 /// - 壊れた行・書き込み途中の行はスキップ（フック側も途中で切れた行はパース側でスキップ前提）
@@ -45,6 +49,12 @@ public sealed class CcEventsReader : IDisposable
 
     private FileSystemWatcher? _watcher;
     private Timer? _pollTimer;
+
+    /// <summary>開きっぱなしの読み取りハンドル（_gate の中でのみ触る）。null なら次の読み取りで開く。</summary>
+    private FileStream? _stream;
+
+    /// <summary>ファイルの差し替え・削除・リネームを見たら立てる。次の読み取りでハンドルを開き直す。</summary>
+    private volatile bool _reopenRequested;
 
     private long _offset;
     private byte[] _pendingBytes = Array.Empty<byte>(); // 改行未達の行末尾（マルチバイト分断対策でバイトのまま保持）
@@ -86,7 +96,9 @@ public sealed class CcEventsReader : IDisposable
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
             };
             _watcher.Changed += (_, _) => RequestDrain();
-            _watcher.Created += (_, _) => RequestDrain();
+            _watcher.Created += (_, _) => { _reopenRequested = true; RequestDrain(); };
+            _watcher.Deleted += (_, _) => _reopenRequested = true;
+            _watcher.Renamed += (_, _) => _reopenRequested = true;
             _watcher.EnableRaisingEvents = true;
         }
         catch
@@ -113,27 +125,29 @@ public sealed class CcEventsReader : IDisposable
             if (_disposed)
                 return;
 
-            if (File.Exists(_file))
+            try
             {
-                try
+                if (File.Exists(_file))
                 {
-                    using var fs = OpenShared();
+                    var fs = _stream = OpenShared();
                     if (fs.Length > TailBytes)
                     {
                         fs.Position = fs.Length - TailBytes;
                         SkipToNextLine(fs); // 行の途中（マルチバイトの途中の可能性あり）を読み捨てる
                     }
                     _offset = fs.Position;
-                }
-                catch
-                {
-                    _offset = 0;
+
+                    var starts = ScanSessionStarts(fs);
+                    if (starts.Count > 0)
+                        Publish(starts);
                 }
             }
-
-            var starts = ScanSessionStarts();
-            if (starts.Count > 0)
-                Publish(starts);
+            catch
+            {
+                // 開けなかった・読めなかった。次の読み取りで開き直す（開始時刻が出ないだけ）
+                _offset = 0;
+                DisposeStream();
+            }
 
             _initialized = true;
         }
@@ -147,12 +161,12 @@ public sealed class CcEventsReader : IDisposable
     /// （実測 2026-07-09: 生存セッション 6 件中 5 件が範囲外）。
     /// JSON パースは該当行だけなので、数十 MB でも走査は一瞬で終わる。
     /// </summary>
-    private List<CcEventRecord> ScanSessionStarts()
+    private List<CcEventRecord> ScanSessionStarts(FileStream fs)
     {
         var found = new List<CcEventRecord>();
         try
         {
-            using var fs = OpenShared();
+            fs.Position = 0;
             var buf = new byte[ScanChunkBytes];
             var carry = Array.Empty<byte>();
 
@@ -193,6 +207,12 @@ public sealed class CcEventsReader : IDisposable
     private FileStream OpenShared()
         => new(_file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
+    private void DisposeStream()
+    {
+        _stream?.Dispose();
+        _stream = null;
+    }
+
     private static void SkipToNextLine(FileStream fs)
     {
         int b;
@@ -230,28 +250,38 @@ public sealed class CcEventsReader : IDisposable
 
         try
         {
-            // ハンドルを開く前に長さだけ確認し、未変化ならポーリングを空振りで終える
-            var fi = new FileInfo(_file);
-            if (!fi.Exists || fi.Length == _offset)
-                return;
+            if (_reopenRequested)
+            {
+                // 差し替え・削除・リネームを見た。掴んでいる実体を手放し、パス上のファイルを開き直す
+                _reopenRequested = false;
+                DisposeStream();
+            }
 
-            long t = Stopwatch.GetTimestamp();
-            using var fs = OpenShared();
-            msOpen = Elapsed(t);
+            if (_stream is null)
+            {
+                if (!File.Exists(_file))
+                    return;
+                long t0 = Stopwatch.GetTimestamp();
+                _stream = OpenShared();
+                msOpen = Elapsed(t0);
+            }
 
-            if (fs.Length < _offset)
+            var fs = _stream;
+            long len = fs.Length; // ハンドル経由の長さ取得は他プロセスの追記も即時に見える
+
+            if (len < _offset)
             {
                 // ローテーション（truncate / 差し替え）: 先頭から読み直す
                 _offset = 0;
                 _pendingBytes = Array.Empty<byte>();
                 rotated = true;
             }
-            if (fs.Length == _offset)
+            if (len == _offset)
                 return;
 
-            t = Stopwatch.GetTimestamp();
+            long t = Stopwatch.GetTimestamp();
             fs.Position = _offset;
-            var appended = new byte[fs.Length - _offset];
+            var appended = new byte[len - _offset];
             int read = 0;
             while (read < appended.Length)
             {
@@ -274,7 +304,9 @@ public sealed class CcEventsReader : IDisposable
         }
         catch
         {
-            // 読めない瞬間（書き込み競合等）は次のポーリングで回収する
+            // 読めない瞬間（書き込み競合等）は次のポーリングで回収する。
+            // 壊れたハンドルを持ち続けないよう手放して開き直す
+            DisposeStream();
         }
         finally
         {
@@ -401,5 +433,13 @@ public sealed class CcEventsReader : IDisposable
         _disposed = true;
         _pollTimer?.Dispose();
         _watcher?.Dispose();
+
+        // 読み取り中でなければハンドルをここで手放す。読み取り中なら奪わない
+        // （_disposed により次の読み取りは走らず、ハンドルはプロセス終了で閉じる）
+        if (Monitor.TryEnter(_gate))
+        {
+            try { DisposeStream(); }
+            finally { Monitor.Exit(_gate); }
+        }
     }
 }
