@@ -5,7 +5,7 @@
 
 ## バージョン
 
-> **現在: v0.7.2**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.7.4**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -55,6 +55,17 @@
       あわせて「既に起動しています」の MessageBox を廃止し、黙って終了する）
 - [x] publish し直して常駐プロセスを v0.7.2 に入れ替え
 - [x] 実機動作確認（時計の表示・二重起動の抑止をユーザーが目視 / 検証コマンドで確認）
+
+## Phase 3: 切り替え UX 改善 + GitHub 公開（2026-07-10）
+
+- [x] GitHub リモート接続（https://github.com/bsfukushi/VSCodeLiveTiles）— main + 全タグをプッシュ
+- [x] v0.7.3 クリック切り替え時の約10秒フリーズを解消
+      （同期 Win32 呼び出しが相手の応答待ちで UI スレッドごとブロック。
+      ShowWindowAsync / SWP_ASYNCWINDOWPOS で非同期化、AttachThreadInput 廃止）
+- [x] v0.7.4 切り替え時のガチャつく再描画を解消
+      （現在地を見ずに毎回 復元→移動→最大化 していた。対象モニターで最大化済みなら前面化だけに）
+- [x] publish し直して常駐プロセスを v0.7.4 に入れ替え
+- [x] 実機動作確認（ユーザー確認済み: 「きれいにストレスなく切り替わる」）
 
 ### 積み残し（未着手）
 
