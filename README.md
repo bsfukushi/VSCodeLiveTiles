@@ -96,3 +96,7 @@ Claude Code のフック（CCPet 由来、グローバル `~/.claude/settings.js
 VSCode 限定・自動グリッド・クリックで移動＋最大化（v0.4）、CC 状態バッジ（v0.6）、
 セッション時計（v0.7）までを実装済み。
 他アプリ対応は `targetProcessNames` を増やせば動く作りにしてある。
+
+## ライセンス
+
+[MIT License](LICENSE)
