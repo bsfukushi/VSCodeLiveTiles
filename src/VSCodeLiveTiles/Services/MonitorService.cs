@@ -59,12 +59,16 @@ public sealed class MonitorService
         return list;
     }
 
-    /// <summary>ウィジェットを載せるモニター。config 指定 → 最初の非プライマリ → プライマリ の順。</summary>
-    public MonitorInfoEx GetWidgetMonitor(int? configIndex)
+    /// <summary>
+    /// ウィジェットを載せるモニター。config 指定 → 最初の非プライマリ → プライマリ の順。
+    /// モニター 0 枚（RDP 切断中・スリープ復帰の一瞬など）は null。構成が戻れば
+    /// DisplaySettingsChanged 経由で再配置されるので、呼び出し側は何もせず待てばよい。
+    /// </summary>
+    public MonitorInfoEx? GetWidgetMonitor(int? configIndex)
     {
         var mons = GetMonitors();
         if (mons.Count == 0)
-            throw new InvalidOperationException("モニターが検出できませんでした。");
+            return null;
 
         if (configIndex is int i && i >= 0 && i < mons.Count)
             return mons[i];
@@ -73,12 +77,12 @@ public sealed class MonitorService
         return nonPrimary ?? mons.First(m => m.IsPrimary);
     }
 
-    /// <summary>クリックで最大化する先。config 指定 → プライマリ → 先頭 の順。</summary>
-    public MonitorInfoEx GetTargetMonitor(int? configIndex)
+    /// <summary>クリックで最大化する先。config 指定 → プライマリ → 先頭 の順。モニター 0 枚は null。</summary>
+    public MonitorInfoEx? GetTargetMonitor(int? configIndex)
     {
         var mons = GetMonitors();
         if (mons.Count == 0)
-            throw new InvalidOperationException("モニターが検出できませんでした。");
+            return null;
 
         if (configIndex is int i && i >= 0 && i < mons.Count)
             return mons[i];

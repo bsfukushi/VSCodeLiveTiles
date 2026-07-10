@@ -91,8 +91,19 @@ public sealed class MainWindow : Window
 
         StartCcBadges();
 
+        // モニターの抜き差し・RDP 切断/再接続・解像度変更で構成が変わったら配置し直す。
+        // イベントは SystemEvents の専用スレッドから来るので UI スレッドへ渡す
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+
         _watchdog = new UiThreadWatchdog(Dispatcher);
     }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+        => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            Log.Info("モニター構成が変わったため配置し直します");
+            PositionOnWidgetMonitor();
+        }));
 
     /// <summary>
     /// CC 状態バッジの監視を開始する。フック未導入・読み取り失敗時は静かに無効化し、
@@ -191,10 +202,18 @@ public sealed class MainWindow : Window
             tile.SetActive(handle == _activeHandle);
     }
 
-    /// <summary>ウィジェット用モニターの作業領域へ物理ピクセルで配置する（DPI 変換を避ける）。</summary>
+    /// <summary>
+    /// ウィジェット用モニターの作業領域へ物理ピクセルで配置する（DPI 変換を避ける）。
+    /// モニターが 1 枚もない（RDP 切断中など）ときは何もせず、構成が戻ったときの
+    /// DisplaySettingsChanged で配置し直されるのを待つ。
+    /// </summary>
     private void PositionOnWidgetMonitor()
     {
-        var m = _monitors.GetWidgetMonitor(_config.WidgetMonitorIndex);
+        if (_monitors.GetWidgetMonitor(_config.WidgetMonitorIndex) is not { } m)
+        {
+            Log.Info("モニターが検出できないため配置を保留します（構成が戻り次第配置し直します）");
+            return;
+        }
         NativeWindows.SetWindowPos(_selfHandle, NativeWindows.HWND_TOP,
             m.WorkLeft, m.WorkTop, m.WorkWidth, m.WorkHeight,
             NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE | NativeWindows.SWP_SHOWWINDOW);
@@ -327,7 +346,8 @@ public sealed class MainWindow : Window
     /// </summary>
     private void OnTileClicked(IntPtr handle)
     {
-        var t = _monitors.GetTargetMonitor(_config.TargetMonitorIndex);
+        if (_monitors.GetTargetMonitor(_config.TargetMonitorIndex) is not { } t)
+            return; // モニターが 1 枚もなければ移動先がない
         Task.Run(() =>
         {
             try
@@ -343,6 +363,8 @@ public sealed class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        // SystemEvents は static イベントなので、外さないとウィンドウが回収されない
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _watchdog?.Dispose();
         _badgeTimer?.Stop();
         _ccSweepTimer?.Stop();
