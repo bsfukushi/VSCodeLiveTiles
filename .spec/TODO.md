@@ -115,7 +115,7 @@
 
 ## Phase 5: 配布準備
 
-- [ ] LICENSE 追加（MIT 想定。公開済みリポジトリなので早めに）
+- [x] LICENSE 追加（MIT。README にもライセンス欄を追記 2026-07-10）
 - [ ] .NET 10 LTS へ移行（net8.0 は 2026-11 EOL）＋ self-contained 発行（単体 exe 約70MB）
 - [ ] CC フックの同梱＋セットアップ手段（現状 CCPet の `append-event.mjs` 前提で同梱なし。
       バッジ機能＝一番の差別化が一般環境で体験されない。**配布成否を分ける最重要項目**。
