@@ -5,7 +5,7 @@
 
 ## バージョン
 
-> **現在: v0.7.5**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.8.3**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -79,11 +79,32 @@
       （3 点セットで配線: settings.json に PostToolUseFailure フック登録 /
       CCPet append-event.mjs の VALID_TYPES に post_tool_use_failure 追加 /
       CcStateTracker で Working にマッピング。CCPet 本体は未対応だが invalid_type スキップで無害）
-- [ ] 未処理例外ハンドラ（`DispatcherUnhandledException` / `AppDomain.UnhandledException`）
-      → 黙って消えるのをやめ、クラッシュログを残す
-- [ ] 軽量ログ機構（`%LOCALAPPDATA%\VSCodeLiveTiles\logs\`。例外＋起動時の環境サマリーのみ）
+- [x] v0.8.0 未処理例外ハンドラ（`DispatcherUnhandledException` / `AppDomain.UnhandledException` /
+      `TaskScheduler.UnobservedTaskException`）＋軽量ログ機構
+      （`%LOCALAPPDATA%\VSCodeLiveTiles\logs\yyyy-MM-dd.log`。例外・起動時の環境サマリー・
+      遅い処理のみ。7 日で自動削除。書き込み失敗は握りつぶす）
+- [x] v0.8.0 UI スレッド ウォッチドッグ（`Services/UiThreadWatchdog.cs`）
+      Send / Input の 2 優先度で ping を打ち、「ネイティブ呼び出しでブロック」と
+      「Dispatcher キューの混雑」を区別して記録する。**このセッションのフリーズ 2 件はどちらもこれで特定した**
+
+### フリーズ調査（2026-07-10。報告: クリック直後にウィジェットがホワイトアウト＋「終了しますか」）
+
+- [x] v0.8.1 クリック直後のフリーズ — `SetForegroundWindow` が UI スレッド上の同期呼び出しで、
+      相手（CC 実行中の VSCode）が固まると Windows のハングアプリ判定（5 秒）まで戻らない。
+      v0.7.3 で 3 つ非同期化したうち、これだけ残っていた。`Task.Run` で背景へ逃がす
+- [x] v0.8.3 `Drain()`（events.jsonl 読み取り）が UI スレッド — こちらが本命。
+      42MB のファイルは追記直後の open だけで 140ms（実測）、混雑時は数秒。
+      ファイル I/O とパースを全て背景スレッドへ。A/B 実測: 40 万行バーストで
+      修正前は Send/Input が 1.3 秒同時停止、修正後は停止 0 件
+
+### 残り
+
 - [ ] モニター構成変化対応（`SystemEvents.DisplaySettingsChanged` で再配置。
       モニター 0 枚（RDP 切断中など）で `GetWidgetMonitor` が throw → 起動クラッシュする経路を塞ぐ）
+- [ ] `UpdateThumbnailRects` が `LayoutUpdated` のたびにサムネイル 1 枚あたり DWM への RPC を
+      2 回投げている（バッジの毎秒更新でレイアウトパスが走るので最低 1 回/秒 × 枚数）。
+      矩形が変わっていなければ捨てる。UI スレッドから他プロセス（dwm.exe）を待つ経路なので
+      詰まれば同じフリーズになりうる。ウォッチドッグで実害を観測してから着手でよい
 
 ## Phase 5: 配布準備
 
@@ -93,6 +114,12 @@
       バッジ機能＝一番の差別化が一般環境で体験されない。**配布成否を分ける最重要項目**。
       CCPet はクローズ済み（2026-07-10）のため、スクリプトをこのリポジトリへ取り込み、
       自分の settings.json の参照先も切り替える — 自分自身が最初の移行テストになる）
+- [ ] **events.jsonl が無限に育つ**（2026-07-10 時点で 42MB / 6,151 行。`events.jsonl.1` は
+      2026-07-07 で止まっており、CCPet クローズ後はローテーションする者がいない）。
+      起動時の全体走査も、追記直後の open のスキャンコストも、サイズに比例して重くなる。
+      v0.8.3 で背景スレッドに逃がしたので UI は固まらないが、根本は残っている。
+      フック同梱と同時に、自前でサイズ上限・ローテーションを持つ（読み取り側は
+      ファイルハンドルを開きっぱなしにすれば追記直後の open スキャンをそもそも踏まない）
 - [ ] README 英語版＋「ネットワーク通信ゼロ・テレメトリゼロ・読み取り専用」の明記
 - [ ] 実測メモリ（Working Set）・CPU 負荷を README に記載（常駐ツールの最初の質問対策）
 
