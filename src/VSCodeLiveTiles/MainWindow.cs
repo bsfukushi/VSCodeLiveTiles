@@ -26,6 +26,7 @@ public sealed class MainWindow : Window
     private readonly TextBlock _emptyLabel;
 
     private WindowTracker? _tracker;
+    private UiThreadWatchdog? _watchdog;
     private IntPtr _selfHandle;
     private IntPtr _activeHandle;
 
@@ -89,6 +90,8 @@ public sealed class MainWindow : Window
         _tracker.Start();
 
         StartCcBadges();
+
+        _watchdog = new UiThreadWatchdog(Dispatcher);
     }
 
     /// <summary>
@@ -312,6 +315,7 @@ public sealed class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _watchdog?.Dispose();
         _badgeTimer?.Stop();
         _ccSweepTimer?.Stop();
         _ccReader?.Dispose();
