@@ -1,5 +1,7 @@
 # VSCode Live Tiles
 
+<img src="icon.png" align="right" width="120" alt="VSCode Live Tiles icon">
+
 サブモニターに VSCode ウィンドウのライブ縮小表示をタイル状に並べ、
 クリックするとメインモニターへ移動して最大化するランチャーウィジェット。
 
@@ -20,7 +22,7 @@ VSCode を複数ウィンドウで立ち上げ、それぞれで Claude Code を
 ## 動作要件
 
 - Windows 10 / 11
-- .NET 8 デスクトップランタイム（開発は SDK 8/9/10 いずれでも可）
+- .NET 10 デスクトップランタイム（self-contained 発行の単体 exe なら不要）
 
 ## ビルド & 実行
 
@@ -28,9 +30,14 @@ VSCode を複数ウィンドウで立ち上げ、それぞれで Claude Code を
 cd S:/Tools/VSCodeLiveTiles
 dotnet build -c Release
 dotnet run --project src/VSCodeLiveTiles          # デバッグ起動
-# もしくは発行して単体 exe 化
+# もしくは発行して exe 化（ランタイム導入済みの自分用）
 dotnet publish src/VSCodeLiveTiles -c Release -r win-x64 --self-contained false -o publish
 # → publish/VSCodeLiveTiles.exe を起動
+
+# 配布用: ランタイム不要の完全単体 exe（約 62MB）
+dotnet publish src/VSCodeLiveTiles -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
+  -p:IncludeNativeLibrariesForSelfExtract=true -o publish-standalone
 ```
 
 起動すると **サブモニター（最初の非プライマリ）** に全画面で常駐し、開いている

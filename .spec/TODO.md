@@ -5,7 +5,7 @@
 
 ## バージョン
 
-> **現在: v0.9.0**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.10.0**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -116,7 +116,15 @@
 ## Phase 5: 配布準備
 
 - [x] LICENSE 追加（MIT。README にもライセンス欄を追記 2026-07-10）
-- [ ] .NET 10 LTS へ移行（net8.0 は 2026-11 EOL）＋ self-contained 発行（単体 exe 約70MB）
+- [x] v0.10.0 .NET 10 LTS へ移行（net8.0 は 2026-11 EOL）＋ self-contained 発行
+      （TFM を net10.0-windows に変更、ビルド警告 0・実起動確認済み。完全単体 exe は
+      `PublishSingleFile` + `EnableCompressionInSingleFile` + `IncludeNativeLibrariesForSelfExtract`
+      で 62.1MB、実起動テスト済み。Working Set 実測: framework-dependent 139MB /
+      self-contained 単体 243MB — README の実測値記載タスクで使う。常駐は従来どおり
+      framework-dependent の publish/ 運用）
+- [x] v0.10.0 アプリアイコン追加（とも作成の icon.png 1024x1024 → マルチサイズ icon.ico
+      16〜256 の 7 サイズ・PNG 圧縮エントリを生成し `<ApplicationIcon>` で埋め込み。
+      README にも掲載）
 - [x] v0.9.0 CC フックの同梱＋セットアップ手段（`hooks/append-event.mjs` を取り込み、
       `hooks/install.mjs` で settings.json へ自動登録 — 既存の append-event 登録を置き換え、
       他フックは保全、バックアップ付き、--dry-run あり。既定パスは
