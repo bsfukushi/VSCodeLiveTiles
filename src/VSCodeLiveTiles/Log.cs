@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 
@@ -16,6 +17,9 @@ namespace VSCodeLiveTiles;
 public static class Log
 {
     private const int RetentionDays = 7;
+
+    /// <summary>UI スレッド上の処理がこれ以上かかったら「遅い」とみなす既定値。</summary>
+    public const int SlowMs = 200;
 
     private static readonly object Gate = new();
     private static string? _dir;
@@ -47,6 +51,18 @@ public static class Log
 
     public static void Error(string message, Exception? ex = null)
         => Write("ERROR", ex is null ? message : $"{message}{Environment.NewLine}{ex}");
+
+    /// <summary>
+    /// UI スレッド上の処理が閾値より長くかかったときだけ記録する。
+    /// 呼び出し側は <see cref="Stopwatch.GetTimestamp"/> の値を渡す（Stopwatch の確保を避けるため。
+    /// レイアウト追従のように毎フレーム走る場所からも呼ぶ）。
+    /// </summary>
+    public static void SlowIf(string operation, long startedAt, int thresholdMs)
+    {
+        double ms = Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+        if (ms >= thresholdMs)
+            Warn($"{operation} に {ms:F0} ms かかりました");
+    }
 
     private static void Write(string level, string message)
     {

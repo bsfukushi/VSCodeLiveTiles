@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows.Threading;
 using VSCodeLiveTiles.Interop;
 
@@ -56,7 +57,11 @@ public sealed class WindowTracker : IDisposable
         if (_disposed)
             return;
 
+        // 列挙は他プロセスのウィンドウを触る。相手が固まったときに巻き添えを食っていないか記録する
+        long started = Stopwatch.GetTimestamp();
         var windows = Snapshot();
+        Log.SlowIf("ウィンドウ列挙（EnumerateWindows）", started, Log.SlowMs);
+
         // handle + タイトル + 最小化状態 でシグネチャ化。変化がなければ再構築しない。
         var sig = string.Join("|", windows
             .OrderBy(w => (long)w.Handle)

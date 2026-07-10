@@ -147,6 +147,7 @@ public sealed class MainWindow : Window
         if (_ccTracker is null)
             return;
 
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         bool anyElapsed = false;
         foreach (var tile in _tiles.Values)
         {
@@ -154,6 +155,7 @@ public sealed class MainWindow : Window
             tile.SetCcState(resolved?.State ?? CcState.None, resolved?.Since ?? default, resolved?.Started);
             anyElapsed |= tile.IsCcWaiting || tile.HasSessionClock;
         }
+        Log.SlowIf($"CC 状態の配布（{_tiles.Count} タイル）", started, Log.SlowMs);
 
         if (anyElapsed)
         {
@@ -200,6 +202,7 @@ public sealed class MainWindow : Window
 
     private void OnWindowsUpdated(IReadOnlyList<NativeWindows.WindowInfo> windows)
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var desired = windows.OrderBy(w => (long)w.Handle).ToList();
         var desiredHandles = new HashSet<IntPtr>(desired.Select(w => w.Handle));
 
@@ -238,7 +241,10 @@ public sealed class MainWindow : Window
             bool hasThumb = _thumbs.ContainsKey(info.Handle);
             if (wantThumb && !hasThumb)
             {
+                // DWM への RPC。dwm.exe が詰まっていれば UI スレッドごと待たされる
+                long tReg = System.Diagnostics.Stopwatch.GetTimestamp();
                 var id = DwmThumbnail.Register(_selfHandle, info.Handle);
+                Log.SlowIf($"DwmRegisterThumbnail(hwnd=0x{info.Handle:X})", tReg, Log.SlowMs);
                 if (id != IntPtr.Zero)
                     _thumbs[info.Handle] = id;
             }
@@ -258,6 +264,8 @@ public sealed class MainWindow : Window
         ApplyActiveHighlight();
         ApplyCcStates(); // 新規タイル・タイトル変化（照合キー変化）に追従
 
+        Log.SlowIf("タイル再構築（OnWindowsUpdated）", started, Log.SlowMs);
+
         // レイアウト確定後に矩形を更新
         Dispatcher.BeginInvoke(new Action(UpdateThumbnailRects), System.Windows.Threading.DispatcherPriority.Loaded);
     }
@@ -268,6 +276,8 @@ public sealed class MainWindow : Window
         if (_selfHandle == IntPtr.Zero || _thumbs.Count == 0)
             return;
 
+        // LayoutUpdated ごとに走り、サムネイル 1 枚につき DWM への RPC を 2 回投げる
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var dpi = VisualTreeHelper.GetDpi(this);
 
         foreach (var (handle, thumbId) in _thumbs)
@@ -296,6 +306,8 @@ public sealed class MainWindow : Window
             DwmThumbnail.UpdateDestination(thumbId, x + pad, y + pad,
                 Math.Max(1, w - pad * 2), Math.Max(1, h - pad * 2), visible: true);
         }
+
+        Log.SlowIf($"サムネイル矩形の追従（DWM 更新 {_thumbs.Count} 枚）", started, Log.SlowMs);
     }
 
     private void UnregisterThumb(IntPtr handle)

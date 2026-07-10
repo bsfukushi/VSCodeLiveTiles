@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -188,6 +189,13 @@ public sealed class CcEventsReader : IDisposable
         if (_disposed || _draining)
             return;
         _draining = true;
+
+        // 遅いときに「どの段階で」を切り分けられるよう、区間ごとに測る
+        long started = Stopwatch.GetTimestamp();
+        double msOpen = 0, msRead = 0, msParse = 0, msDispatch = 0;
+        int bytes = 0, records = 0;
+        bool rotated = false;
+
         try
         {
             // ハンドルを開く前に長さだけ確認し、未変化ならポーリングを空振りで終える
@@ -195,16 +203,21 @@ public sealed class CcEventsReader : IDisposable
             if (!fi.Exists || fi.Length == _offset)
                 return;
 
+            long t = Stopwatch.GetTimestamp();
             using var fs = OpenShared();
+            msOpen = Elapsed(t);
+
             if (fs.Length < _offset)
             {
                 // ローテーション（truncate / 差し替え）: 先頭から読み直す
                 _offset = 0;
                 _pendingBytes = Array.Empty<byte>();
+                rotated = true;
             }
             if (fs.Length == _offset)
                 return;
 
+            t = Stopwatch.GetTimestamp();
             fs.Position = _offset;
             var appended = new byte[fs.Length - _offset];
             int read = 0;
@@ -216,10 +229,18 @@ public sealed class CcEventsReader : IDisposable
                 read += n;
             }
             _offset += read;
+            bytes = read;
+            msRead = Elapsed(t);
 
-            var records = ParseLines(appended.AsSpan(0, read));
-            if (records.Count > 0)
-                Received?.Invoke(records);
+            t = Stopwatch.GetTimestamp();
+            var parsed = ParseLines(appended.AsSpan(0, read));
+            records = parsed.Count;
+            msParse = Elapsed(t);
+
+            t = Stopwatch.GetTimestamp();
+            if (parsed.Count > 0)
+                Received?.Invoke(parsed);
+            msDispatch = Elapsed(t);
         }
         catch
         {
@@ -228,8 +249,17 @@ public sealed class CcEventsReader : IDisposable
         finally
         {
             _draining = false;
+            double total = Elapsed(started);
+            if (total >= Log.SlowMs)
+            {
+                Log.Warn($"events.jsonl の読み取り {total:F0} ms" +
+                    $"（open {msOpen:F0} / read {msRead:F0} [{bytes:N0}B{(rotated ? " 全読み直し" : "")}]" +
+                    $" / parse {msParse:F0} [{records}件] / 状態配布 {msDispatch:F0}）");
+            }
         }
     }
+
+    private static double Elapsed(long since) => Stopwatch.GetElapsedTime(since).TotalMilliseconds;
 
     /// <summary>
     /// 追記分を前回の未完行と連結し、完全な行だけをパースする。
