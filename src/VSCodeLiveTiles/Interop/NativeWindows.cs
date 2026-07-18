@@ -219,6 +219,40 @@ public static class NativeWindows
     [DllImport("user32.dll")]
     private static extern bool IsZoomed(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    /// <summary>
+    /// ウィンドウの外形サイズ（物理px）。相手プロセスにメッセージを送らず
+    /// ウィンドウマネージャーの共有状態から読むだけなので、相手が固まっていてもブロックしない。
+    /// 取得できなければ false（サイズは 0）。
+    /// </summary>
+    public static bool TryGetWindowSize(IntPtr hWnd, out int width, out int height)
+    {
+        if (hWnd != IntPtr.Zero && GetWindowRect(hWnd, out var r))
+        {
+            width = r.Right - r.Left;
+            height = r.Bottom - r.Top;
+            return true;
+        }
+        width = 0;
+        height = 0;
+        return false;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);
+
+    /// <summary>
+    /// 起動からの経過ミリ秒。<see cref="Environment.TickCount64"/> と違い
+    /// スリープ・休止で止まっていた時間を含まない（経過時間の計測がスリープをまたいでも化けない）。
+    /// </summary>
+    public static long UnbiasedTickMs()
+    {
+        QueryUnbiasedInterruptTime(out ulong t); // 100ns 単位。Win7 以降で失敗しない
+        return (long)(t / 10_000);
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X, Y; }
 

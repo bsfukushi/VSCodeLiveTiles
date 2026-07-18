@@ -1,4 +1,5 @@
 using System.Windows.Threading;
+using VSCodeLiveTiles.Interop;
 
 namespace VSCodeLiveTiles.Services;
 
@@ -16,6 +17,10 @@ namespace VSCodeLiveTiles.Services;
 ///   入力処理が飢餓を起こしている。流量を絞る（デバウンス・間引き）話になる
 ///
 /// 両方が同時に記録されたときは前者（ブロック）。Send が止まれば Input も必ず止まるため。
+///
+/// 時間は <see cref="NativeWindows.UnbiasedTickMs"/>（サスペンド時間を含まない）で測る。
+/// TickCount64 で測るとスリープをまたいだ ping が「90 万 ms 停止」のような偽の巨大値になる
+/// （2026-07-15 のログで実際に発生）。
 /// </summary>
 public sealed class UiThreadWatchdog : IDisposable
 {
@@ -58,7 +63,7 @@ public sealed class UiThreadWatchdog : IDisposable
         private readonly string _label;
         private readonly int _thresholdMs;
 
-        private long _sentAt;              // 0 = 未応答の ping なし。それ以外は送出時刻（TickCount64）
+        private long _sentAt;              // 0 = 未応答の ping なし。それ以外は送出時刻（UnbiasedTickMs）
         private volatile bool _reported;   // この停止について「継続中」を既に記録したか
 
         public Ping(Dispatcher dispatcher, DispatcherPriority priority, string label, int thresholdMs)
@@ -76,7 +81,7 @@ public sealed class UiThreadWatchdog : IDisposable
             {
                 // 前回の ping がまだ返っていない = 今まさに詰まっている。
                 // 原因の呼び出しがスタックに居る時刻を残せるのはここだけ
-                long stuckFor = Environment.TickCount64 - outstanding;
+                long stuckFor = NativeWindows.UnbiasedTickMs() - outstanding;
                 if (stuckFor >= _thresholdMs && !_reported)
                 {
                     _reported = true;
@@ -85,13 +90,13 @@ public sealed class UiThreadWatchdog : IDisposable
                 return;
             }
 
-            long sentAt = Environment.TickCount64;
+            long sentAt = NativeWindows.UnbiasedTickMs();
             Interlocked.Exchange(ref _sentAt, sentAt);
             try
             {
                 _dispatcher.BeginInvoke(_priority, () =>
                 {
-                    long roundTrip = Environment.TickCount64 - sentAt;
+                    long roundTrip = NativeWindows.UnbiasedTickMs() - sentAt;
                     Interlocked.Exchange(ref _sentAt, 0);
                     if (roundTrip >= _thresholdMs)
                         Log.Warn($"{_label} が {roundTrip} ms 停止していました（復帰）");

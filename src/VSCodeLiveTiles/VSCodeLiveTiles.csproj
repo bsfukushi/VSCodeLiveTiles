@@ -10,7 +10,7 @@
     <AssemblyName>VSCodeLiveTiles</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
-    <Version>0.10.0</Version>
+    <Version>0.10.1</Version>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 

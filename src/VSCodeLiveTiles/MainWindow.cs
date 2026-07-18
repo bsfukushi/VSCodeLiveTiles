@@ -41,6 +41,12 @@ public sealed class MainWindow : Window
     private readonly Dictionary<IntPtr, IntPtr> _thumbs = new();
     private readonly List<IntPtr> _order = new();
 
+    // thumbId → 最後に DWM へ適用した内容。同じなら RPC を投げない（UpdateThumbnailRects）
+    private readonly Dictionary<IntPtr, ThumbApplied> _appliedThumbs = new();
+
+    /// <summary>DWM へ適用済みの表示先矩形とソースサイズ（どちらかが変わったときだけ更新する）。</summary>
+    private readonly record struct ThumbApplied(int X, int Y, int W, int H, int SrcW, int SrcH, bool Visible);
+
     public MainWindow(AppConfig config, MonitorService monitors)
     {
         _config = config;
@@ -289,13 +295,20 @@ public sealed class MainWindow : Window
         Dispatcher.BeginInvoke(new Action(UpdateThumbnailRects), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
-    /// <summary>各サムネイルの表示先を、対応タイルの表示領域（メインウィンドウ物理座標）に合わせる。</summary>
+    /// <summary>
+    /// 各サムネイルの表示先を、対応タイルの表示領域（メインウィンドウ物理座標）に合わせる。
+    ///
+    /// LayoutUpdated ごとに走る（バッジの毎秒更新で最低 1 回/秒）が、DWM への RPC は
+    /// 表示先矩形かソースサイズが前回適用時から変わったときだけ投げる。
+    /// dwm.exe を UI スレッドで待つ経路なので、定常状態で毎秒叩き続けない。
+    /// ソースサイズ（レターボックス比率に影響）の変化検知は GetWindowRect —
+    /// 相手プロセスを待たない読み取りだけで済ませる。
+    /// </summary>
     private void UpdateThumbnailRects()
     {
         if (_selfHandle == IntPtr.Zero || _thumbs.Count == 0)
             return;
 
-        // LayoutUpdated ごとに走り、サムネイル 1 枚につき DWM への RPC を 2 回投げる
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var dpi = VisualTreeHelper.GetDpi(this);
 
@@ -307,7 +320,11 @@ public sealed class MainWindow : Window
             var area = tile.ThumbnailArea;
             if (area.RenderSize.Width <= 0 || area.RenderSize.Height <= 0)
             {
-                DwmThumbnail.SetVisible(thumbId, false);
+                if (!_appliedThumbs.TryGetValue(thumbId, out var hidden) || hidden.Visible)
+                {
+                    DwmThumbnail.SetVisible(thumbId, false);
+                    _appliedThumbs[thumbId] = default; // Visible=false
+                }
                 continue;
             }
 
@@ -320,10 +337,16 @@ public sealed class MainWindow : Window
             int w = (int)Math.Round(r.Width * dpi.DpiScaleX);
             int h = (int)Math.Round(r.Height * dpi.DpiScaleY);
 
+            NativeWindows.TryGetWindowSize(handle, out int srcW, out int srcH);
+            var current = new ThumbApplied(x, y, w, h, srcW, srcH, Visible: true);
+            if (_appliedThumbs.TryGetValue(thumbId, out var applied) && applied == current)
+                continue;
+
             // 内側に少し余白を取って枠と重ならないように
             const int pad = 3;
             DwmThumbnail.UpdateDestination(thumbId, x + pad, y + pad,
                 Math.Max(1, w - pad * 2), Math.Max(1, h - pad * 2), visible: true);
+            _appliedThumbs[thumbId] = current;
         }
 
         Log.SlowIf($"サムネイル矩形の追従（DWM 更新 {_thumbs.Count} 枚）", started, Log.SlowMs);
@@ -335,6 +358,7 @@ public sealed class MainWindow : Window
         {
             DwmThumbnail.Unregister(id);
             _thumbs.Remove(handle);
+            _appliedThumbs.Remove(id);
         }
     }
 
@@ -373,6 +397,7 @@ public sealed class MainWindow : Window
         foreach (var id in _thumbs.Values)
             DwmThumbnail.Unregister(id);
         _thumbs.Clear();
+        _appliedThumbs.Clear();
         _tiles.Clear();
         _order.Clear();
         base.OnClosed(e);

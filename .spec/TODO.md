@@ -108,10 +108,15 @@
       `GetWidgetMonitor` / `GetTargetMonitor` は throw をやめて null 返しにし、
       モニター 0 枚（RDP 切断中など）の起動クラッシュ経路を塞いだ。0 枚のときは
       配置を保留し、構成が戻った DisplaySettingsChanged で配置し直す）
-- [ ] `UpdateThumbnailRects` が `LayoutUpdated` のたびにサムネイル 1 枚あたり DWM への RPC を
-      2 回投げている（バッジの毎秒更新でレイアウトパスが走るので最低 1 回/秒 × 枚数）。
-      矩形が変わっていなければ捨てる。UI スレッドから他プロセス（dwm.exe）を待つ経路なので
-      詰まれば同じフリーズになりうる。ウォッチドッグで実害を観測してから着手でよい
+- [x] v0.10.1 `UpdateThumbnailRects` が `LayoutUpdated` のたびにサムネイル 1 枚あたり DWM への RPC を
+      2 回投げていた（バッジの毎秒更新でレイアウトパスが走るので最低 1 回/秒 × 枚数）。
+      前回適用した表示先矩形＋ソースサイズ（GetWindowRect — 相手を待たない読み取り）を
+      キャッシュし、変化したときだけ DWM を呼ぶように。定常状態の RPC は 0 回/秒に
+      （※7/11〜18 の毎日 1.1〜1.5 秒の Send 停止は SlowIf 内訳ログが皆無のため DWM では
+      なくスタンバイ復帰後のページイン等が濃厚。これは予防的掃除として実施）
+- [x] v0.10.1 ウォッチドッグのスリープ誤検知を解消（7/15 に「90 万 ms 停止」を記録 —
+      TickCount64 がスリープ中も進むため。QueryUnbiasedInterruptTime ベースの
+      `NativeWindows.UnbiasedTickMs()` に置き換え、サスペンド時間を計測から除外）
 
 ## Phase 5: 配布準備
 
