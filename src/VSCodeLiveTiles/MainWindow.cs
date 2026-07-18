@@ -1,8 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shell;
 using VSCodeLiveTiles.Controls;
 using VSCodeLiveTiles.Interop;
 using VSCodeLiveTiles.Services;
@@ -10,8 +12,11 @@ using VSCodeLiveTiles.Services;
 namespace VSCodeLiveTiles;
 
 /// <summary>
-/// サブモニターに全画面ボーダーレスで常駐し、対象ウィンドウをライブサムネイルの
-/// 自動グリッドで並べるホストウィンドウ。
+/// 対象ウィンドウをライブサムネイルのタイルで並べるホストウィンドウ。
+/// 表示は 2 モード（appsettings.json の displayMode）:
+/// - window（既定）: 枠なし・最前面・自由リサイズの小型ウィンドウ。タイルはタスクバー風の
+///   ストリップ（縦長→1列 / 横長→1行）。配置は window.json に記憶
+/// - fullscreen: サブモニターに全画面ボーダーレス常駐（従来動作）。グリッドは ceil(√N) 列
 ///
 /// DWM サムネイルはトップレベルウィンドウ（このウィンドウ本体の HWND）を登録先にして
 /// 初めて合成される。各タイルの矩形をこのウィンドウのクライアント座標（物理px）で計算し、
@@ -24,6 +29,9 @@ public sealed class MainWindow : Window
     private readonly UniformGrid _grid;
     private readonly Grid _root;
     private readonly TextBlock _emptyLabel;
+    private readonly bool _windowMode;
+    private System.Windows.Threading.DispatcherTimer? _placementSaveTimer;
+    private MenuItem? _topmostMenuItem;
 
     private WindowTracker? _tracker;
     private UiThreadWatchdog? _watchdog;
@@ -73,7 +81,44 @@ public sealed class MainWindow : Window
         _root = new Grid();
         _root.Children.Add(_grid);
         _root.Children.Add(_emptyLabel);
-        Content = _root;
+
+        _windowMode = !config.IsFullscreen;
+        if (_windowMode)
+        {
+            // 枠なしのまま端ドラッグでリサイズできるようにする。
+            // CaptionHeight=0 なのでクライアント領域のクリックは奪わない（タイルはそのまま押せる）
+            ResizeMode = ResizeMode.CanResize;
+            MinWidth = 200;
+            MinHeight = 150;
+            Topmost = true; // 実際の値は RestoreWindowPlacement で window.json から復元
+            WindowChrome.SetWindowChrome(this, new WindowChrome
+            {
+                CaptionHeight = 0,
+                ResizeBorderThickness = new Thickness(6),
+                GlassFrameThickness = new Thickness(0),
+                UseAeroCaptionButtons = false,
+            });
+
+            var outer = new Grid();
+            outer.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            outer.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            var grip = BuildGripBar();
+            Grid.SetRow(grip, 0);
+            Grid.SetRow(_root, 1);
+            outer.Children.Add(grip);
+            outer.Children.Add(_root);
+            Content = outer;
+
+            SizeChanged += (_, _) => UpdateStripColumns();
+            SizeChanged += (_, _) => SchedulePlacementSave();
+            LocationChanged += (_, _) => SchedulePlacementSave();
+        }
+        else
+        {
+            Content = _root;
+        }
+
+        ContextMenu = BuildContextMenu();
 
         // レイアウトが変わるたびにサムネイル矩形を追従させる
         _root.LayoutUpdated += (_, _) => UpdateThumbnailRects();
@@ -81,12 +126,69 @@ public sealed class MainWindow : Window
         DpiChanged += (_, _) => UpdateThumbnailRects();
     }
 
+    /// <summary>上端のドラッグ用グリップ帯。掴める場所が見えることを優先する（SPEC §3）。</summary>
+    private Border BuildGripBar()
+    {
+        var normal = new SolidColorBrush(Color.FromRgb(0x1E, 0x1A, 0x18));
+        var hover = new SolidColorBrush(Color.FromRgb(0x33, 0x2D, 0x2A));
+        var bar = new Border
+        {
+            Height = 16,
+            Background = normal,
+            Cursor = Cursors.SizeAll,
+            Child = new TextBlock
+            {
+                Text = "• • •",
+                Foreground = new SolidColorBrush(Color.FromRgb(0x70, 0x70, 0x78)),
+                FontSize = 10,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+        bar.MouseEnter += (_, _) => bar.Background = hover;
+        bar.MouseLeave += (_, _) => bar.Background = normal;
+        bar.MouseLeftButtonDown += (_, _) =>
+        {
+            try
+            {
+                DragMove();
+            }
+            catch (InvalidOperationException)
+            {
+                // ボタンが既に離れている（クリック連打時など）。移動しないだけでよい
+            }
+        };
+        return bar;
+    }
+
+    /// <summary>右クリックメニュー（両モード共通）。「終了」が Alt+F4 しかない状態の解消を兼ねる。</summary>
+    private ContextMenu BuildContextMenu()
+    {
+        _topmostMenuItem = new MenuItem { Header = "最前面に固定", IsCheckable = true, IsChecked = Topmost };
+        _topmostMenuItem.Click += (_, _) =>
+        {
+            Topmost = _topmostMenuItem.IsChecked;
+            SchedulePlacementSave();
+        };
+        var exit = new MenuItem { Header = "終了" };
+        exit.Click += (_, _) => Close();
+
+        var menu = new ContextMenu();
+        menu.Items.Add(_topmostMenuItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(exit);
+        return menu;
+    }
+
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
         _selfHandle = new WindowInteropHelper(this).Handle;
 
-        PositionOnWidgetMonitor();
+        if (_windowMode)
+            RestoreWindowPlacement();
+        else
+            PositionOnWidgetMonitor();
 
         _activeHandle = NativeWindows.GetForeground();
 
@@ -108,8 +210,139 @@ public sealed class MainWindow : Window
         => Dispatcher.BeginInvoke(new Action(() =>
         {
             Log.Info("モニター構成が変わったため配置し直します");
-            PositionOnWidgetMonitor();
+            if (_windowMode)
+                EnsureVisiblePlacement();
+            else
+                PositionOnWidgetMonitor();
         }));
+
+    /// <summary>
+    /// window.json の保存値でウィンドウを配置する（物理px）。初回・値なしはプライマリ作業領域の
+    /// 右端に縦長で置く。保存値がどのモニターにも掛かっていなければ最寄り作業領域へクランプ。
+    /// モニター 0 枚のときは配置を保留し、DisplaySettingsChanged を待つ（fullscreen と同じ方針）。
+    /// </summary>
+    private void RestoreWindowPlacement()
+    {
+        var saved = WindowPlacementStore.Load();
+        Topmost = saved?.Topmost ?? true;
+        if (_topmostMenuItem is not null)
+            _topmostMenuItem.IsChecked = Topmost;
+
+        var mons = _monitors.GetMonitors();
+        if (mons.Count == 0)
+        {
+            Log.Info("モニターが検出できないため配置を保留します（構成が戻り次第配置し直します）");
+            return;
+        }
+
+        int x, y, w, h;
+        if (saved is { Width: > 0, Height: > 0 })
+        {
+            (x, y, w, h) = ClampToWorkArea(saved.X, saved.Y, saved.Width, saved.Height, mons);
+        }
+        else
+        {
+            var pri = mons.FirstOrDefault(m => m.IsPrimary) ?? mons[0];
+            w = 420;
+            h = pri.WorkHeight * 6 / 10;
+            x = pri.WorkLeft + pri.WorkWidth - w - 16;
+            y = pri.WorkTop + (pri.WorkHeight - h) / 2;
+        }
+        NativeWindows.SetWindowPos(_selfHandle, NativeWindows.HWND_TOP, x, y, w, h,
+            NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE | NativeWindows.SWP_SHOWWINDOW);
+    }
+
+    /// <summary>モニター構成変化後、ウィンドウが画面外に取り残されていたら作業領域内へ戻す。</summary>
+    private void EnsureVisiblePlacement()
+    {
+        if (_selfHandle == IntPtr.Zero)
+            return;
+        var mons = _monitors.GetMonitors();
+        if (mons.Count == 0
+            || !NativeWindows.TryGetWindowBounds(_selfHandle, out int x, out int y, out int w, out int h))
+            return;
+
+        var c = ClampToWorkArea(x, y, w, h, mons);
+        if (c != (x, y, w, h))
+            NativeWindows.SetWindowPos(_selfHandle, NativeWindows.HWND_TOP, c.X, c.Y, c.W, c.H,
+                NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE | NativeWindows.SWP_SHOWWINDOW);
+    }
+
+    /// <summary>矩形がどの作業領域にも掛かっていなければ、最寄りモニターの作業領域内へ収める。</summary>
+    private static (int X, int Y, int W, int H) ClampToWorkArea(
+        int x, int y, int w, int h, IReadOnlyList<MonitorService.MonitorInfoEx> mons)
+    {
+        bool visible = mons.Any(m =>
+            x < m.WorkLeft + m.WorkWidth && x + w > m.WorkLeft &&
+            y < m.WorkTop + m.WorkHeight && y + h > m.WorkTop);
+        if (visible)
+            return (x, y, w, h);
+
+        var near = mons.OrderBy(m =>
+        {
+            long dx = x + w / 2 - (m.WorkLeft + m.WorkWidth / 2);
+            long dy = y + h / 2 - (m.WorkTop + m.WorkHeight / 2);
+            return dx * dx + dy * dy;
+        }).First();
+
+        w = Math.Min(w, near.WorkWidth);
+        h = Math.Min(h, near.WorkHeight);
+        x = Math.Clamp(x, near.WorkLeft, near.WorkLeft + near.WorkWidth - w);
+        y = Math.Clamp(y, near.WorkTop, near.WorkTop + near.WorkHeight - h);
+        return (x, y, w, h);
+    }
+
+    /// <summary>移動・リサイズ確定から 1 秒後に保存（連続イベントの書き込みを 1 回にまとめる）。</summary>
+    private void SchedulePlacementSave()
+    {
+        if (!_windowMode || _selfHandle == IntPtr.Zero)
+            return;
+        if (_placementSaveTimer is null)
+        {
+            _placementSaveTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1),
+            };
+            _placementSaveTimer.Tick += (_, _) =>
+            {
+                _placementSaveTimer!.Stop();
+                SavePlacementNow();
+            };
+        }
+        _placementSaveTimer.Stop();
+        _placementSaveTimer.Start();
+    }
+
+    private void SavePlacementNow()
+    {
+        if (!_windowMode || _selfHandle == IntPtr.Zero)
+            return;
+        if (NativeWindows.TryGetWindowBounds(_selfHandle, out int x, out int y, out int w, out int h))
+            WindowPlacementStore.Save(new WindowPlacement(x, y, w, h, Topmost));
+    }
+
+    /// <summary>window モードのストリップの向き（縦長→1列 / 横長→1行）をリサイズに追従させる。</summary>
+    private void UpdateStripColumns()
+    {
+        if (!_windowMode || _tiles.Count == 0)
+            return;
+        int cols = GridColumnsFor(_tiles.Count);
+        if (_grid.Columns != cols)
+            _grid.Columns = cols;
+    }
+
+    /// <summary>
+    /// タイル数 n に対する列数。window モードはタスクバー風ストリップ
+    /// （縦長→1列 / 横長→1行）、fullscreen は従来の ceil(√n) グリッド。
+    /// </summary>
+    private int GridColumnsFor(int n)
+    {
+        if (n <= 1)
+            return 1;
+        if (!_windowMode)
+            return (int)Math.Ceiling(Math.Sqrt(n));
+        return ActualHeight > ActualWidth ? 1 : n;
+    }
 
     /// <summary>
     /// CC 状態バッジの監視を開始する。フック未導入・読み取り失敗時は静かに無効化し、
@@ -283,7 +516,7 @@ public sealed class MainWindow : Window
         _order.AddRange(desired.Select(w => w.Handle));
 
         int n = desired.Count;
-        _grid.Columns = n == 0 ? 1 : (int)Math.Ceiling(Math.Sqrt(n));
+        _grid.Columns = GridColumnsFor(n);
         _emptyLabel.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         ApplyActiveHighlight();
@@ -328,8 +561,10 @@ public sealed class MainWindow : Window
                 continue;
             }
 
-            // タイル表示領域の矩形を、ウィンドウ本体クライアント座標（DIP）→ 物理pxへ
-            var t = area.TransformToVisual(_root);
+            // タイル表示領域の矩形を、ウィンドウ本体クライアント座標（DIP）→ 物理pxへ。
+            // DWM の表示先はクライアント座標基準。_root 基準で計算すると window モードの
+            // グリップ帯（上端 16px）の分だけずれてタイルからはみ出す
+            var t = area.TransformToVisual(this);
             var r = t.TransformBounds(new Rect(area.RenderSize));
 
             int x = (int)Math.Round(r.X * dpi.DpiScaleX);
@@ -389,6 +624,8 @@ public sealed class MainWindow : Window
     {
         // SystemEvents は static イベントなので、外さないとウィンドウが回収されない
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        _placementSaveTimer?.Stop();
+        SavePlacementNow();
         _watchdog?.Dispose();
         _badgeTimer?.Stop();
         _ccSweepTimer?.Stop();

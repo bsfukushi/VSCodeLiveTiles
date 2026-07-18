@@ -153,11 +153,18 @@
 
 ## Phase 6: 間口拡大
 
-- [ ] **ウィンドウモード**（とも要望 2026-07-10）: 全画面常駐をやめ、CCPet のような
-      最前面・自由リサイズのウィンドウに。縦長→1列 / 横長→1行 など縦横比でグリッド自動調整。
-      シングルモニター環境（一般ユーザーの過半）への対応がこれで解決する
+- [x] v0.11.0 **ウィンドウモード**（SPEC §ウィンドウモード 承認 2026-07-18）:
+      `displayMode: "window"`（コード既定）で枠なし・最前面・自由リサイズの小型ウィンドウ。
+      WindowChrome（CaptionHeight=0 / ResizeBorder 6px）＋上端グリップ帯ドラッグ。
+      タスクバー風ストリップ（縦長→1列 / 横長→1行）。配置・最前面フラグは
+      `%LOCALAPPDATA%\VSCodeLiveTiles\window.json` に 1 秒デバウンス保存、
+      復元時は作業領域クランプ。リポジトリの appsettings.json は fullscreen
+      （＝ともさん環境。publish で上書きされても維持される）。
+      実機検証済み: 初期配置 / 復元 / topmost / 縦横切替 / 保存 / fullscreen 不変。
+      サムネイル矩形の基準を _root → ウィンドウに修正（グリップ帯 16px 分のはみ出し fix）
 - [ ] VSCode 派生対応: `Code - Insiders` / `Cursor` / `VSCodium` を既定の
       `targetProcessNames` / `captionSuffixesToStrip` に追加
 - [ ] UI 文字列の英語化（「最小化中」「質問/承認/完了/作業中」等のハードコード解消）
-- [ ] 右クリックメニューに「終了」（現状 Alt+F4 のみ）
+- [x] v0.11.0 右クリックメニューに「終了」「最前面に固定」（両モード共通。
+      ウィンドウモード実装と同時に消化）
 - [ ] GitHub Releases でバイナリ配布 ＋ winget マニフェスト登録（未署名 SmartScreen 対策の現実解）

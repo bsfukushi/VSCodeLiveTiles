@@ -240,6 +240,24 @@ public static class NativeWindows
         return false;
     }
 
+    /// <summary>ウィンドウの外形矩形（物理px）。<see cref="TryGetWindowSize"/> の位置つき版。</summary>
+    public static bool TryGetWindowBounds(IntPtr hWnd, out int x, out int y, out int width, out int height)
+    {
+        if (hWnd != IntPtr.Zero && GetWindowRect(hWnd, out var r))
+        {
+            x = r.Left;
+            y = r.Top;
+            width = r.Right - r.Left;
+            height = r.Bottom - r.Top;
+            return true;
+        }
+        x = 0;
+        y = 0;
+        width = 0;
+        height = 0;
+        return false;
+    }
+
     [DllImport("kernel32.dll")]
     private static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);
 

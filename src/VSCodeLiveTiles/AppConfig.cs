@@ -16,6 +16,12 @@ public sealed class AppConfig
     public string[] CaptionSuffixesToStrip { get; init; } =
         new[] { " - Visual Studio Code", " — Visual Studio Code" };
 
+    /// <summary>"window"（枠なし小型ウィンドウ・既定）| "fullscreen"（サブモニター全画面常駐）。</summary>
+    public string DisplayMode { get; init; } = "window";
+
+    public bool IsFullscreen
+        => string.Equals(DisplayMode, "fullscreen", StringComparison.OrdinalIgnoreCase);
+
     private static readonly JsonSerializerOptions Options = new()
     {
         PropertyNameCaseInsensitive = true,
