@@ -26,9 +26,9 @@ public sealed class ThumbnailTile : Border
     private static readonly Brush ActiveCaptionBg = new SolidColorBrush(Color.FromRgb(0x00, 0x7A, 0xCC));
     private static readonly Brush ActiveCaptionFg = new SolidColorBrush(Color.FromRgb(0xFF, 0xFF, 0xFF));
 
-    // CC 状態バッジの色（SPEC §5）。質問=黄 / 承認=橙 / 完了=緑 / 作業中=青
+    // CC 状態バッジの色（SPEC §5・§バッジ視覚調整）。質問=黄 / 承認=マゼンタ / 完了=緑 / 作業中=青
     private static readonly Color QuestionColor = Color.FromRgb(0xE5, 0xC0, 0x7B);
-    private static readonly Color PermissionColor = Color.FromRgb(0xD1, 0x9A, 0x66);
+    private static readonly Color PermissionColor = Color.FromRgb(0xE0, 0x40, 0x9A);
     private static readonly Brush QuestionFg = new SolidColorBrush(QuestionColor);
     private static readonly Brush PermissionFg = new SolidColorBrush(PermissionColor);
     private static readonly Brush DoneFg = new SolidColorBrush(Color.FromRgb(0x98, 0xC3, 0x79));
@@ -37,6 +37,7 @@ public sealed class ThumbnailTile : Border
     private static readonly Brush ClockFg = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0xA2));
 
     private readonly string[] _captionSuffixes;
+    private readonly Border _frame; // タイル本体の 2px 枠（基底 Border は外周の明滅リング）
     private readonly Border _contentArea;
     private readonly Border _captionBar;
     private readonly TextBlock _caption;
@@ -82,13 +83,25 @@ public sealed class ThumbnailTile : Border
     {
         _captionSuffixes = config.CaptionSuffixesToStrip;
 
-        Margin = new Thickness(6);
-        Background = TileBg;
-        BorderBrush = TileBorder;
-        BorderThickness = new Thickness(2); // 太さは固定（色だけ変える）→ サムネイルがズレない
-        CornerRadius = new CornerRadius(4);
+        // 基底 Border は常設の明滅リング（5px・通常時は透明）。Margin 1＋リング 5＋枠 2 で
+        // コンテンツオフセットは旧構成（Margin 6＋枠 2）と同じ 8px — 待ちの点灯・消灯で
+        // 太さは一切変えないので、サムネイル矩形はズレない（SPEC §バッジ視覚調整）
+        Margin = new Thickness(1);
+        // Transparent を null にしないこと — null だとリング領域がヒットテスト不能になり
+        // クリック・ホバーの反応域が痩せる（リング上のクリックは意図的に有効＝的が広い）
+        BorderBrush = Brushes.Transparent;
+        BorderThickness = new Thickness(5);
+        CornerRadius = new CornerRadius(9); // 内側の枠 4 ＋ リング 5 で同心に見える半径
         SnapsToDevicePixels = true;
         Cursor = Cursors.Hand;
+
+        _frame = new Border
+        {
+            Background = TileBg,
+            BorderBrush = TileBorder,
+            BorderThickness = new Thickness(2),
+            CornerRadius = new CornerRadius(4),
+        };
 
         var root = new Grid();
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -147,7 +160,8 @@ public sealed class ThumbnailTile : Border
         Grid.SetRow(_captionBar, 1);
         root.Children.Add(_captionBar);
 
-        Child = root;
+        _frame.Child = root;
+        Child = _frame;
 
         // タイル全体でクリックを拾う（サムネイルは入力を奪わないので content 上でも発火する）
         PreviewMouseLeftButtonUp += (_, _) => RaiseClicked();
@@ -172,12 +186,16 @@ public sealed class ThumbnailTile : Border
     {
         if (IsCcWaitingUnseen)
         {
-            BorderBrush = GetOrStartGlow(_ccState == CcState.WaitingQuestion ? QuestionColor : PermissionColor);
+            // リングと枠に同じブラシを共有させ、視覚幅 7px（5＋2）をひとつの明滅として見せる
+            var glow = GetOrStartGlow(_ccState == CcState.WaitingQuestion ? QuestionColor : PermissionColor);
+            BorderBrush = glow;
+            _frame.BorderBrush = glow;
         }
         else
         {
             StopGlow();
-            BorderBrush = _isActive ? ActiveBorder : _isHover ? HoverBorder : TileBorder;
+            BorderBrush = Brushes.Transparent;
+            _frame.BorderBrush = _isActive ? ActiveBorder : _isHover ? HoverBorder : TileBorder;
         }
 
         if (_isActive)
@@ -197,7 +215,8 @@ public sealed class ThumbnailTile : Border
 
     /// <summary>
     /// 待ちグロー用の明滅ブラシを返す（約 1Hz で不透明度を往復）。
-    /// BorderThickness は 2 固定のまま色だけ変える（太さを変えるとサムネイルがズレる）。
+    /// リング（常設 5px）と枠 2px の色だけ変え、太さはアニメーションしない
+    /// （太さを変えるとサムネイルがズレる）。
     /// </summary>
     private Brush GetOrStartGlow(Color color)
     {
