@@ -87,6 +87,26 @@
       クリック扱いになりウィンドウが切り替わっていた
 - [x] バージョン 0.12.0 ＋ コミット ＋ `git tag v0.12.0` ＋ publish 常駐入れ替え
 
+### Step 7-4: 右クリックメニューの拡張（v0.13.0）✅ 2026-07-20 リリース済み
+
+**ゴール**: window モードの右クリックメニューから、最大化のトグルと
+ストリップの向き固定（自動 / 縦1列 / 横1行）ができる。fullscreen では両方とも出ない。
+
+- [x] `WindowPlacementStore.cs` — `WindowPlacement` に `Maximized` / `Restore{X,Y,Width,Height}` /
+      `LayoutMode` を既定値付きで追加（旧 window.json もそのまま読める）
+- [x] `MainWindow.cs` — メニュー構築を window / fullscreen で分岐。レイアウトは 3 択のラジオ相当、
+      最大化はチェック可能なトグル
+- [x] `MainWindow.cs` — 擬似最大化（`WindowState.Maximized` は使わず作業領域へ `SetWindowPos`。
+      枠なしウィンドウを本当に最大化するとタスクバーを覆うため）。解除で直前の矩形へ復帰。
+      最大化中にリサイズされたら `SyncMaximizedState` でチェックを自動解除
+- [x] `GridColumnsFor` — `StripLayout.Auto/Vertical/Horizontal` を反映（fullscreen は ceil(√N) のまま）
+- [x] ビルド確認（警告 0）
+- [x] 動作確認 — UI Automation でメニュー項目を名前指定で Invoke して検証:
+      縦1列（横長ウィンドウでも1列）/ 横1行（縦長ウィンドウでも1行）/ 最大化 →作業領域
+      （1920,0 2560x1392 ＝タスクバーを覆わない）/ 解除→直前の矩形へ復帰 /
+      最大化中のリサイズでチェック自動解除 / 再起動後もレイアウト・配置・最前面を復元
+- [x] バージョン 0.13.0 ＋ コミット ＋ `git tag v0.13.0` ＋ publish 常駐入れ替え
+
 ### Step 7-3: Phase 7 完了確認
 
 - [ ] Phase 全体のコードレビュー（横断レビュー — リング構造とドラッグの相互作用含む）

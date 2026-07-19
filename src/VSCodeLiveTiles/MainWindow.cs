@@ -33,6 +33,21 @@ public sealed class MainWindow : Window
     private System.Windows.Threading.DispatcherTimer? _placementSaveTimer;
     private MenuItem? _topmostMenuItem;
 
+    // 右クリックメニュー（window モードのみ）: 擬似最大化とストリップの向き固定
+    private MenuItem? _maximizeMenuItem;
+    private readonly Dictionary<StripLayout, MenuItem> _layoutMenuItems = new();
+    private StripLayout _layout = StripLayout.Auto;
+    private bool _maximized;
+    private (int X, int Y, int W, int H)? _restoreBounds;
+
+    /// <summary>ストリップの向き。Auto はウィンドウのアスペクト比で決める（従来動作）。</summary>
+    private enum StripLayout
+    {
+        Auto,
+        Vertical,   // 1 列
+        Horizontal, // 1 行
+    }
+
     private WindowTracker? _tracker;
     private UiThreadWatchdog? _watchdog;
     private IntPtr _selfHandle;
@@ -127,7 +142,8 @@ public sealed class MainWindow : Window
             outer.Children.Add(_root);
             Content = outer;
 
-            SizeChanged += (_, _) => UpdateStripColumns();
+            SizeChanged += (_, _) => ApplyStripColumns();
+            SizeChanged += (_, _) => SyncMaximizedState();
             SizeChanged += (_, _) => SchedulePlacementSave();
             LocationChanged += (_, _) => SchedulePlacementSave();
         }
@@ -197,9 +213,37 @@ public sealed class MainWindow : Window
         return bar;
     }
 
-    /// <summary>右クリックメニュー（両モード共通）。「終了」が Alt+F4 しかない状態の解消を兼ねる。</summary>
+    /// <summary>
+    /// 右クリックメニュー。「最前面に固定 / 終了」は両モード共通、
+    /// 「最大化」「レイアウト」は window モードだけに出す（SPEC §右クリックメニューの拡張 §2）。
+    /// </summary>
     private ContextMenu BuildContextMenu()
     {
+        var menu = new ContextMenu();
+
+        if (_windowMode)
+        {
+            _maximizeMenuItem = new MenuItem { Header = "最大化", IsCheckable = true };
+            _maximizeMenuItem.Click += (_, _) => SetMaximized(_maximizeMenuItem.IsChecked);
+            menu.Items.Add(_maximizeMenuItem);
+            menu.Items.Add(new Separator());
+
+            foreach (var (mode, header) in new[]
+            {
+                (StripLayout.Auto, "レイアウト: 自動"),
+                (StripLayout.Vertical, "レイアウト: 縦1列"),
+                (StripLayout.Horizontal, "レイアウト: 横1行"),
+            })
+            {
+                var item = new MenuItem { Header = header, IsCheckable = true };
+                item.Click += (_, _) => SetLayout(mode);
+                _layoutMenuItems[mode] = item;
+                menu.Items.Add(item);
+            }
+            UpdateLayoutMenuChecks();
+            menu.Items.Add(new Separator());
+        }
+
         _topmostMenuItem = new MenuItem { Header = "最前面に固定", IsCheckable = true, IsChecked = Topmost };
         _topmostMenuItem.Click += (_, _) =>
         {
@@ -209,12 +253,92 @@ public sealed class MainWindow : Window
         var exit = new MenuItem { Header = "終了" };
         exit.Click += (_, _) => Close();
 
-        var menu = new ContextMenu();
         menu.Items.Add(_topmostMenuItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(exit);
         return menu;
     }
+
+    /// <summary>ラジオ的に 1 つだけチェックを付ける（IsCheckable なのでクリックで反転した分を戻す）。</summary>
+    private void UpdateLayoutMenuChecks()
+    {
+        foreach (var (mode, item) in _layoutMenuItems)
+            item.IsChecked = mode == _layout;
+    }
+
+    private void SetLayout(StripLayout layout)
+    {
+        _layout = layout;
+        UpdateLayoutMenuChecks();
+        ApplyStripColumns(); // リサイズを待たずに即反映
+        SchedulePlacementSave();
+    }
+
+    /// <summary>
+    /// 擬似最大化。WindowStyle.None のまま WindowState.Maximized にするとタスクバーを覆うため、
+    /// 作業領域へ SetWindowPos で広げる（SPEC §3）。解除は直前の位置・サイズへ。
+    /// </summary>
+    private void SetMaximized(bool maximize)
+    {
+        if (!_windowMode || _selfHandle == IntPtr.Zero)
+            return;
+
+        if (maximize)
+        {
+            if (!NativeWindows.TryGetWindowBounds(_selfHandle, out int x, out int y, out int w, out int h)
+                || MonitorFor(x, y, w, h) is not { } m)
+                return;
+            _restoreBounds = (x, y, w, h);
+            _maximized = true;
+            SetBounds(m.WorkLeft, m.WorkTop, m.WorkWidth, m.WorkHeight);
+        }
+        else
+        {
+            _maximized = false;
+            if (_restoreBounds is { } r)
+                SetBounds(r.X, r.Y, r.W, r.H);
+        }
+
+        if (_maximizeMenuItem is not null)
+            _maximizeMenuItem.IsChecked = _maximized;
+        SchedulePlacementSave();
+    }
+
+    /// <summary>最大化中に端ドラッグでリサイズされたらチェックを外す（もう作業領域と一致しない）。</summary>
+    private void SyncMaximizedState()
+    {
+        if (!_windowMode || !_maximized || _selfHandle == IntPtr.Zero)
+            return;
+        if (!NativeWindows.TryGetWindowBounds(_selfHandle, out int x, out int y, out int w, out int h))
+            return;
+        if (MonitorFor(x, y, w, h) is { } m
+            && x == m.WorkLeft && y == m.WorkTop && w == m.WorkWidth && h == m.WorkHeight)
+            return;
+
+        _maximized = false;
+        if (_maximizeMenuItem is not null)
+            _maximizeMenuItem.IsChecked = false;
+    }
+
+    /// <summary>矩形が最も多く重なっているモニター（どれとも重ならなければ最初の 1 枚）。</summary>
+    private MonitorService.MonitorInfoEx? MonitorFor(int x, int y, int w, int h)
+    {
+        var mons = _monitors.GetMonitors();
+        if (mons.Count == 0)
+            return null;
+        return mons
+            .OrderByDescending(m =>
+            {
+                long ow = Math.Max(0, Math.Min(x + w, m.WorkLeft + m.WorkWidth) - Math.Max(x, m.WorkLeft));
+                long oh = Math.Max(0, Math.Min(y + h, m.WorkTop + m.WorkHeight) - Math.Max(y, m.WorkTop));
+                return ow * oh;
+            })
+            .First();
+    }
+
+    private void SetBounds(int x, int y, int w, int h)
+        => NativeWindows.SetWindowPos(_selfHandle, NativeWindows.HWND_TOP, x, y, w, h,
+            NativeWindows.SWP_NOZORDER | NativeWindows.SWP_NOACTIVATE | NativeWindows.SWP_SHOWWINDOW);
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -263,6 +387,21 @@ public sealed class MainWindow : Window
         Topmost = saved?.Topmost ?? true;
         if (_topmostMenuItem is not null)
             _topmostMenuItem.IsChecked = Topmost;
+
+        _layout = saved?.LayoutMode switch
+        {
+            "vertical" => StripLayout.Vertical,
+            "horizontal" => StripLayout.Horizontal,
+            _ => StripLayout.Auto,
+        };
+        UpdateLayoutMenuChecks();
+        ApplyStripColumns();
+
+        _maximized = saved?.Maximized ?? false;
+        if (saved is { RestoreWidth: > 0, RestoreHeight: > 0 })
+            _restoreBounds = (saved.RestoreX, saved.RestoreY, saved.RestoreWidth, saved.RestoreHeight);
+        if (_maximizeMenuItem is not null)
+            _maximizeMenuItem.IsChecked = _maximized;
 
         var mons = _monitors.GetMonitors();
         if (mons.Count == 0)
@@ -353,14 +492,24 @@ public sealed class MainWindow : Window
     {
         if (!_windowMode || _selfHandle == IntPtr.Zero)
             return;
-        if (NativeWindows.TryGetWindowBounds(_selfHandle, out int x, out int y, out int w, out int h))
-            WindowPlacementStore.Save(new WindowPlacement(x, y, w, h, Topmost));
+        if (!NativeWindows.TryGetWindowBounds(_selfHandle, out int x, out int y, out int w, out int h))
+            return;
+
+        var r = _restoreBounds ?? (x, y, w, h);
+        var layout = _layout switch
+        {
+            StripLayout.Vertical => "vertical",
+            StripLayout.Horizontal => "horizontal",
+            _ => "auto",
+        };
+        WindowPlacementStore.Save(new WindowPlacement(x, y, w, h, Topmost,
+            _maximized, r.X, r.Y, r.W, r.H, layout));
     }
 
-    /// <summary>window モードのストリップの向き（縦長→1列 / 横長→1行）をリサイズに追従させる。</summary>
-    private void UpdateStripColumns()
+    /// <summary>window モードのストリップの向きを現在の設定・サイズに合わせる。</summary>
+    private void ApplyStripColumns()
     {
-        if (!_windowMode || _tiles.Count == 0)
+        if (!_windowMode)
             return;
         int cols = GridColumnsFor(_tiles.Count);
         if (_grid.Columns != cols)
@@ -368,8 +517,9 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>
-    /// タイル数 n に対する列数。window モードはタスクバー風ストリップ
-    /// （縦長→1列 / 横長→1行）、fullscreen は従来の ceil(√n) グリッド。
+    /// タイル数 n に対する列数。window モードはタスクバー風ストリップで、
+    /// メニューで固定されていればその向き、自動ならアスペクト比（縦長→1列 / 横長→1行）。
+    /// fullscreen は従来の ceil(√n) グリッド。
     /// </summary>
     private int GridColumnsFor(int n)
     {
@@ -377,7 +527,12 @@ public sealed class MainWindow : Window
             return 1;
         if (!_windowMode)
             return (int)Math.Ceiling(Math.Sqrt(n));
-        return ActualHeight > ActualWidth ? 1 : n;
+        return _layout switch
+        {
+            StripLayout.Vertical => 1,
+            StripLayout.Horizontal => n,
+            _ => ActualHeight > ActualWidth ? 1 : n,
+        };
     }
 
     /// <summary>
