@@ -47,13 +47,31 @@ public sealed class MainWindow : Window
     // handle → タイル。thumbs: source handle → DWM サムネイル ID（最小化中は登録しない）
     private readonly Dictionary<IntPtr, ThumbnailTile> _tiles = new();
     private readonly Dictionary<IntPtr, IntPtr> _thumbs = new();
+
+    /// <summary>
+    /// 手動並び順（メモリ上・HWND キー / SPEC §タイル並べ替え）。閉じたウィンドウの記憶も残すので、
+    /// 実在するタイルより多い。表示順はこのリストから実在ハンドルだけを拾ったもの。
+    /// </summary>
     private readonly List<IntPtr> _order = new();
+
+    /// <summary>並びリストに残す最大件数（死んだ HWND を無限に溜めない）。</summary>
+    private const int MaxRememberedOrder = 64;
+
+    // タイルのドラッグ並べ替え（SPEC §タイル並べ替え）
+    private ThumbnailTile? _dragTile;
+    private Point _dragStart;
+    private int _dragOriginalIndex = -1;
+    private bool _dragging;
+    // 一度ドラッグに入った押下は、離した先のタイルをクリック扱いにしない
+    // （Esc で畳んだ後のボタン離しも含む）
+    private bool _draggedSincePress;
 
     // thumbId → 最後に DWM へ適用した内容。同じなら RPC を投げない（UpdateThumbnailRects）
     private readonly Dictionary<IntPtr, ThumbApplied> _appliedThumbs = new();
 
-    /// <summary>DWM へ適用済みの表示先矩形とソースサイズ（どちらかが変わったときだけ更新する）。</summary>
-    private readonly record struct ThumbApplied(int X, int Y, int W, int H, int SrcW, int SrcH, bool Visible);
+    /// <summary>DWM へ適用済みの表示先矩形・ソースサイズ・不透明度（変わったときだけ更新する）。</summary>
+    private readonly record struct ThumbApplied(
+        int X, int Y, int W, int H, int SrcW, int SrcH, bool Visible, byte Opacity);
 
     public MainWindow(AppConfig config, MonitorService monitors)
     {
@@ -119,6 +137,24 @@ public sealed class MainWindow : Window
         }
 
         ContextMenu = BuildContextMenu();
+
+        // 並べ替えドラッグはタイルではなくグリッドで拾う。Preview（トンネル）なので
+        // タイルのクリック処理より先に走り、ドラッグ確定時はここで Handled にして
+        // クリック＝ウィンドウ切り替えの誤爆を止められる
+        _grid.PreviewMouseLeftButtonDown += OnGridPreviewMouseLeftButtonDown;
+        _grid.PreviewMouseMove += OnGridPreviewMouseMove;
+        _grid.PreviewMouseLeftButtonUp += OnGridPreviewMouseLeftButtonUp;
+        // 予期しないキャプチャ喪失（右クリックメニュー・他アプリの奪取など）は中断＝キャンセル扱い。
+        // 正常なドロップは EndDrag が先に _dragging を降ろしてから解放するので、ここは no-op になる
+        _grid.LostMouseCapture += (_, _) => CancelDrag();
+        PreviewKeyDown += (_, e) =>
+        {
+            if (_dragging && e.Key == Key.Escape)
+            {
+                CancelDrag();
+                e.Handled = true;
+            }
+        };
 
         // レイアウトが変わるたびにサムネイル矩形を追従させる
         _root.LayoutUpdated += (_, _) => UpdateThumbnailRects();
@@ -461,19 +497,35 @@ public sealed class MainWindow : Window
     private void OnWindowsUpdated(IReadOnlyList<NativeWindows.WindowInfo> windows)
     {
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
-        var desired = windows.OrderBy(w => (long)w.Handle).ToList();
-        var desiredHandles = new HashSet<IntPtr>(desired.Select(w => w.Handle));
+        var byHandle = windows.ToDictionary(w => w.Handle);
 
-        // 消えたウィンドウ：サムネイル解放 + タイル除去
-        foreach (var handle in _order.Where(h => !desiredHandles.Contains(h)).ToList())
+        // 消えたウィンドウ：サムネイル解放 + タイル除去。
+        // 並びリストからは消さない（開き直しても位置を保つ / SPEC §タイル並べ替え §3）
+        foreach (var handle in _tiles.Keys.Where(h => !byHandle.ContainsKey(h)).ToList())
         {
             UnregisterThumb(handle);
-            if (_tiles.TryGetValue(handle, out var tile))
+            if (_tiles.TryGetValue(handle, out var gone))
             {
-                _grid.Children.Remove(tile);
+                gone.SetCcState(CcState.None, default, null); // 明滅クロックを残さない
+                _grid.Children.Remove(gone);
                 _tiles.Remove(handle);
             }
         }
+
+        // 掴んでいたタイルのウィンドウが消えたらドラッグを畳む（並びは現状のまま確定）
+        if (_dragTile is not null && !byHandle.ContainsKey(_dragTile.Handle))
+            EndDrag();
+
+        // 新規ウィンドウは並びリストの末尾へ。同時に複数現れたときは HWND 昇順
+        // （＝手を付けていない状態では従来と同じ並びになる）
+        foreach (var info in windows.OrderBy(w => (long)w.Handle))
+        {
+            if (!_order.Contains(info.Handle))
+                _order.Add(info.Handle);
+        }
+        PruneOrder(byHandle.Keys);
+
+        var desired = _order.Where(byHandle.ContainsKey).Select(h => byHandle[h]).ToList();
 
         // 追加・更新
         for (int i = 0; i < desired.Count; i++)
@@ -491,7 +543,7 @@ public sealed class MainWindow : Window
                 tile.Clicked += OnTileClicked;
                 tile.Bind(info);
                 _tiles[info.Handle] = tile;
-                _grid.Children.Insert(i, tile);
+                _grid.Children.Add(tile); // 並び順は末尾の SyncTileOrder で揃える
             }
 
             // サムネイルは「表示中(非最小化)」のときだけ登録する
@@ -512,8 +564,7 @@ public sealed class MainWindow : Window
             }
         }
 
-        _order.Clear();
-        _order.AddRange(desired.Select(w => w.Handle));
+        SyncTileOrder();
 
         int n = desired.Count;
         _grid.Columns = GridColumnsFor(n);
@@ -526,6 +577,205 @@ public sealed class MainWindow : Window
 
         // レイアウト確定後に矩形を更新
         Dispatcher.BeginInvoke(new Action(UpdateThumbnailRects), System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    /// <summary>
+    /// 並びリストが増え続けないよう、上限を超えた分だけ死んだ HWND を並びの先頭側から捨てる。
+    /// 実在するウィンドウの記憶は絶対に落とさない。
+    /// ドラッグ中は動かさない（_dragOriginalIndex が指す位置がずれてキャンセル復元が狂う）。
+    /// </summary>
+    private void PruneOrder(IEnumerable<IntPtr> alive)
+    {
+        if (_dragging || _order.Count <= MaxRememberedOrder)
+            return;
+        var live = new HashSet<IntPtr>(alive);
+        for (int i = 0; i < _order.Count && _order.Count > MaxRememberedOrder;)
+        {
+            if (live.Contains(_order[i]))
+                i++;
+            else
+                _order.RemoveAt(i);
+        }
+    }
+
+    /// <summary>グリッドの子の並びを並びリスト順に合わせる（タイル数は高々数十なので素直に詰める）。</summary>
+    private void SyncTileOrder()
+    {
+        int index = 0;
+        foreach (var handle in _order)
+        {
+            if (!_tiles.TryGetValue(handle, out var tile))
+                continue;
+            int cur = _grid.Children.IndexOf(tile);
+            if (cur != index)
+            {
+                if (cur >= 0)
+                    _grid.Children.RemoveAt(cur);
+                _grid.Children.Insert(Math.Min(index, _grid.Children.Count), tile);
+            }
+            index++;
+        }
+    }
+
+    /// <summary>押下地点を覚えるだけ。ここではまだ掴まない（閾値未満はクリック＝切り替え）。</summary>
+    private void OnGridPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // フラグの寿命は「1 回の押下」。キャプチャを奪われて Up が届かなかった前回の残骸で
+        // 次のクリックを飲み込まないよう、押下のたびに必ず落とす
+        _draggedSincePress = false;
+        if (_dragging)
+            return;
+        _dragTile = FindTile(e.OriginalSource);
+        _dragStart = e.GetPosition(this);
+    }
+
+    /// <summary>閾値超えでドラッグ開始、以降はカーソル下のタイル位置へ挿入していく。</summary>
+    private void OnGridPreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_dragTile is null)
+            return;
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            EndDrag();
+            return;
+        }
+
+        var pos = e.GetPosition(this);
+        if (!_dragging)
+        {
+            if (Math.Abs(pos.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance
+                && Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+            BeginDrag();
+        }
+
+        // PreviewKeyDown を取りこぼしたとき（メニューなど別要素がフォーカスを持っている場合）の保険。
+        // WPF の KeyboardDevice 経由なので、アプリ自体が非アクティブなら効かない
+        if (Keyboard.IsKeyDown(Key.Escape))
+        {
+            CancelDrag();
+            return;
+        }
+        MoveDragTileTo(pos);
+    }
+
+    /// <summary>ドロップ確定。ウィジェット外で離した場合は元の並びに戻す（SPEC §2）。</summary>
+    private void OnGridPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        bool dragged = _draggedSincePress;
+        _draggedSincePress = false;
+
+        if (_dragging)
+        {
+            if (new Rect(RenderSize).Contains(e.GetPosition(this)))
+                EndDrag();
+            else
+                CancelDrag();
+        }
+        _dragTile = null; // 閾値未満＝クリック。タイル側の切り替え処理へ通す
+
+        // ドラッグした押下はトンネル段階で止めて、タイルの PreviewMouseLeftButtonUp
+        // （＝ウィンドウ切り替え）を発火させない。Esc で畳んだ後の離しもここに来る
+        if (dragged)
+            e.Handled = true;
+    }
+
+    private void BeginDrag()
+    {
+        if (_dragTile is null)
+            return;
+        _dragging = true;
+        _draggedSincePress = true;
+        _dragOriginalIndex = _order.IndexOf(_dragTile.Handle);
+        _dragTile.SetDragging(true);
+        _grid.CaptureMouse(); // ウィジェット外へ出ても移動・ドロップを追える
+        UpdateThumbnailRects(); // サムネイル本体も半透明に
+    }
+
+    /// <summary>カーソル下のタイルの位置へ、掴んだタイルを割り込ませる（挿入方式・スワップではない）。</summary>
+    private void MoveDragTileTo(Point pos)
+    {
+        if (_dragTile is null)
+            return;
+        var target = TileAt(pos);
+        if (target is null || ReferenceEquals(target, _dragTile))
+            return;
+
+        int from = _order.IndexOf(_dragTile.Handle);
+        int to = _order.IndexOf(target.Handle);
+        if (from < 0 || to < 0 || from == to)
+            return;
+
+        _order.RemoveAt(from);
+        int t = _order.IndexOf(target.Handle);
+        _order.Insert(from < to ? t + 1 : t, _dragTile.Handle);
+        SyncTileOrder();
+    }
+
+    /// <summary>現在の並びのままドラッグを終える（正常なドロップ・対象ウィンドウ消失）。</summary>
+    private void EndDrag()
+    {
+        _dragOriginalIndex = -1;
+        var tile = _dragTile;
+        _dragTile = null;
+        if (!_dragging)
+            return;
+
+        _dragging = false; // ReleaseMouseCapture が LostMouseCapture を呼ぶので先に降ろす
+        tile?.SetDragging(false);
+        if (_grid.IsMouseCaptured)
+            _grid.ReleaseMouseCapture();
+        UpdateThumbnailRects();
+    }
+
+    /// <summary>掴んだタイルを掴む前の位置へ戻してから終える（Esc / ウィジェット外ドロップ）。</summary>
+    private void CancelDrag()
+    {
+        if (!_dragging || _dragTile is null)
+        {
+            EndDrag();
+            return;
+        }
+
+        var handle = _dragTile.Handle;
+        int origin = _dragOriginalIndex;
+        int cur = _order.IndexOf(handle);
+        if (cur >= 0 && origin >= 0)
+        {
+            _order.RemoveAt(cur);
+            _order.Insert(Math.Clamp(origin, 0, _order.Count), handle);
+        }
+        SyncTileOrder(); // 並びを戻してから畳む（先に畳むと復元前のレイアウトで DWM を 1 往復叩く）
+        EndDrag();
+    }
+
+    /// <summary>指定座標（ウィンドウ座標）に重なっているタイル。</summary>
+    private ThumbnailTile? TileAt(Point pos)
+    {
+        foreach (var tile in _tiles.Values)
+        {
+            if (!tile.IsVisible)
+                continue;
+            var r = tile.TransformToVisual(this).TransformBounds(new Rect(tile.RenderSize));
+            if (r.Contains(pos))
+                return tile;
+        }
+        return null;
+    }
+
+    /// <summary>イベント発生元（キャプションの TextBlock 等）から親方向にタイルを探す。</summary>
+    private static ThumbnailTile? FindTile(object? source)
+    {
+        var node = source as DependencyObject;
+        while (node is not null)
+        {
+            if (node is ThumbnailTile tile)
+                return tile;
+            node = node is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(node)
+                : LogicalTreeHelper.GetParent(node);
+        }
+        return null;
     }
 
     /// <summary>
@@ -573,14 +823,16 @@ public sealed class MainWindow : Window
             int h = (int)Math.Round(r.Height * dpi.DpiScaleY);
 
             NativeWindows.TryGetWindowSize(handle, out int srcW, out int srcH);
-            var current = new ThumbApplied(x, y, w, h, srcW, srcH, Visible: true);
+            // 掴んでいるタイルはサムネイルも半透明にする（WPF の Opacity は DWM 合成に効かない）
+            byte opacity = tile.IsDragging ? (byte)(255 * ThumbnailTile.DragOpacity) : (byte)255;
+            var current = new ThumbApplied(x, y, w, h, srcW, srcH, Visible: true, opacity);
             if (_appliedThumbs.TryGetValue(thumbId, out var applied) && applied == current)
                 continue;
 
             // 内側に少し余白を取って枠と重ならないように
             const int pad = 3;
             DwmThumbnail.UpdateDestination(thumbId, x + pad, y + pad,
-                Math.Max(1, w - pad * 2), Math.Max(1, h - pad * 2), visible: true);
+                Math.Max(1, w - pad * 2), Math.Max(1, h - pad * 2), visible: true, opacity: opacity);
             _appliedThumbs[thumbId] = current;
         }
 

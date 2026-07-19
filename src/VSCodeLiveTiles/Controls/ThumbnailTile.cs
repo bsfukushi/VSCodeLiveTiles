@@ -56,6 +56,15 @@ public sealed class ThumbnailTile : Border
     public IntPtr Handle { get; private set; }
     public bool IsMinimizedState { get; private set; }
 
+    /// <summary>
+    /// 並べ替えドラッグで掴まれているか。WPF の Opacity は DWM が合成するサムネイルには効かないので、
+    /// MainWindow 側がこのフラグを見てサムネイルの不透明度も落とす。
+    /// </summary>
+    public bool IsDragging { get; private set; }
+
+    /// <summary>掴んでいる間の不透明度。枠（WPF）とサムネイル（DWM）で同じ濃さにするため共有する。</summary>
+    public const double DragOpacity = 0.55;
+
     /// <summary>サフィックス除去後のキャプション（CC 状態の照合キー）。</summary>
     public string CaptionText => _caption.Text;
 
@@ -167,6 +176,15 @@ public sealed class ThumbnailTile : Border
         PreviewMouseLeftButtonUp += (_, _) => RaiseClicked();
         MouseEnter += (_, _) => { _isHover = true; ApplyHighlight(); };
         MouseLeave += (_, _) => { _isHover = false; ApplyHighlight(); };
+    }
+
+    /// <summary>並べ替えドラッグの掴み状態を設定する（枠・キャプション帯を半透明化）。</summary>
+    public void SetDragging(bool dragging)
+    {
+        if (IsDragging == dragging)
+            return;
+        IsDragging = dragging;
+        Opacity = dragging ? DragOpacity : 1.0;
     }
 
     /// <summary>アクティブ（前面）ウィンドウかどうかを設定して強調表示を更新する。</summary>

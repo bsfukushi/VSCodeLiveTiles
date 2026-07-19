@@ -70,8 +70,11 @@ internal static class DwmThumbnail
     /// <summary>
     /// サムネイルの表示先矩形（登録先ウィンドウのクライアント座標・物理ピクセル）を更新する。
     /// アスペクト比を保ったまま矩形内にレターボックス配置する。
+    /// opacity はサムネイル画像自体の不透明度（WPF の Opacity は DWM 合成には効かないため、
+    /// ドラッグ中の半透明化はここで指定する）。
     /// </summary>
-    public static void UpdateDestination(IntPtr thumbId, int x, int y, int width, int height, bool visible = true)
+    public static void UpdateDestination(IntPtr thumbId, int x, int y, int width, int height,
+        bool visible = true, byte opacity = 255)
     {
         if (thumbId == IntPtr.Zero || width <= 0 || height <= 0)
             return;
@@ -92,7 +95,7 @@ internal static class DwmThumbnail
         {
             dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_SOURCECLIENTAREAONLY,
             rcDestination = rect,
-            opacity = 255,
+            opacity = opacity,
             fVisible = visible,
             fSourceClientAreaOnly = false,
         };
