@@ -1,104 +1,47 @@
 # HANDOFF
 
-> 直前の要約: `.agent/handoff/2026-07-18.md`
+> 直前の要約: `.agent/handoff/2026-07-20.md`
 
 ---
 
-## セッション 2026-07-19 17:38
+## セッション 2026-07-23 07:08
 
 ### 使用ツール
 Claude Code（VSCode 拡張 / Opus 4.8 1M）
 
 ### 現在のタスクと進捗
-- [x] HANDOFF ロールオーバー（2026-07-18.md に 2 セッション分を要約）
-- [x] Step 7-2 タイルのドラッグ並べ替え（v0.12.0）— 実装・実機検証・レビュー反映・
-      リリース（commit d84c5a1 / tag v0.12.0 / push 済み）・publish 常駐入れ替え済み
-- [x] Step 7-3 の既存問題（明滅クロック延命）を同時に解消
-- [ ] Phase 6 積み残し: README（日英）ウィンドウモード追記 / VSCode 派生対応 / UI 英語化 /
-      GitHub Releases + winget
+- [x] HANDOFF ロールオーバー（2026-07-19〜20 を `2026-07-20.md` に要約）
+- [x] project-hub のループエンジニアリング相談アドバイス 4 点を検討 → Tier A（低リスク3点）を実装・検証・リリース（v0.14.0）
+- [ ] Tier B（③b outcome バッジ / ④ notification 誤 🔑）は設計相談してから別セッション
 
-### v0.12.0（タイルのドラッグ並べ替え）
+### v0.14.0（ループエンジニアリング可視化 Tier A）
+- **① 並列度バッジ**: running 本数を bool→int で運び、作業中を `● N`（本数不明は `● 作業中`）。
+  本数は stop イベントにしか乗らないので他 Working 契機で 0 にリセット（stale な数字を残さない）。
+  `CcEventRecord.RunningBackgroundTasks` / `Session.RunningTasks` / `Resolve` が本数を返す
+- **② ホットパス read 除去**: `append-event.mjs` が post_tool_use / post_tool_use_failure で
+  projectName 解決（AGENTS.md read）をスキップ。reader は projectName を sticky 保持し null で
+  上書きしないので照合に影響なし
+- **③a 完了経過**: `✔ 完了 N分`（放置度・秒は出さず粗く）。`RefreshElapsed` に Done を含め、
+  `UpdateBadge` に Text 差分ガード（同値再描画を回避）
 
-- **手動並びリスト `_order`**（HWND キー・メモリ上）。整列を HWND 昇順 → リスト順に変更。
-  新規は末尾 / 閉じたウィンドウの記憶は保持 / 死んだ HWND は上限 64 件で先頭側から間引く
-- **ドラッグ検知はグリッドの Preview（トンネル）段階**。タイルへ降りる前に通るので、
-  ドラッグした押下は `Handled` で止めるだけで既存のクリック切り替え経路を一切改造せずに済んだ
-- **半透明化は WPF だけでは足りない**。`Opacity` は DWM が合成するサムネイルに効かないため、
-  `DwmThumbnail.UpdateDestination` に opacity 引数を追加。濃さは
-  `ThumbnailTile.DragOpacity` に一本化し、`ThumbApplied` に Opacity を含めて差分検知させた
-- キャンセル（Esc / 枠外ドロップ / キャプチャ喪失）は掴む前の位置へ復元
+### 検証（隔離 events ファイル＋実アプリ＋スクショ）
+- publish 常駐は停止済みだったのでミューテックス衝突なし。`VSCODE_LIVE_TILES_EVENTS_FILE` を
+  homedir 配下のテストファイルに向け、フック経由で合成イベントを注入 → dev(Release) で目視
+- 確認: `● 3`（stop running×3）/ post_tool_use で `● 作業中` へリセット / `✔ 完了 0分`（クロック
+  0:04→0:11 進行で経過描画も動作）/ ② は node 単体で projectName スキップ/解決を確認
+- ※ 生ラインで JSON を書くとき cwd の `\` は `\\` にエスケープが要る（`S:\Tools` は無効エスケープで
+  reader がスキップ）。合成注入はフック経由（JSON.stringify）が安全
 
-### 実機検証（合成マウス入力＋スクリーンショット比較）
-
-`mouse_event` / `keybd_event` の P/Invoke を PowerShell から叩いてドラッグを合成し、
-前後のスクショを比較する方式で検証。前方向/後方向の挿入・Esc・枠外ドロップ・
-クリック非誤爆・新規末尾・途中を閉じても並び保持・再起動で HWND 順に復帰・
-window（縦1列/横1行）と fullscreen（3×3 行またぎ）の両モードを確認。
-
-**検証で見つけたバグ**: Esc で畳んだ後にボタンを離すと、離した位置のタイルが
-クリック扱いになりウィンドウが切り替わっていた → `_draggedSincePress` で押下単位に抑止。
-
-### コードレビュー（指摘 8 件 / bug 0）
-
-反映 6 件:
-- HIGH `_draggedSincePress` の取り残し（キャプチャを奪われて Up が届かないと次のクリックを
-  1 回飲み込む）→ 押下ごとにリセット
-- MEDIUM キャプチャ喪失を確定ではなくキャンセル扱いに（意図しない並び変更は Undo できない）
-- MEDIUM ドラッグ中は `PruneOrder` を止める（`_dragOriginalIndex` の添字ズレ防止）
-- キャンセル時の DWM 余分な 1 往復を解消 / 不透明度の二重定義を解消 / コメント修正
-
-未対応 1 件: HWND 再利用で新規ウィンドウが末尾ではなく旧位置に出る可能性（永続化なし仕様のため許容）
-
-### セッションハイライト
-
-- とも: 「ともさんがテストして、閉じちゃいましたw」
-  → CC: それまで「ウィジェットが勝手に最大化した」「並びが勝手に入れ替わった」を
-  コード側の不具合として追いかけていたが、**ともさんが同時に触っていた分だった**。
-  以降は「触られていない状態での再現」を切り分け条件に加え、隔離テストで並び保持を確認。
-  自動検証中に人が触ると観測が汚染される、という当たり前の落とし穴
-- CC: dev ビルドを起動しても黙って終了する現象で数分溶かした。原因は**多重起動防止ミューテックス**
-  （publish 版が常駐中）。2 つ目のインスタンスはログを 1 行も残さず Shutdown するので、
-  ログを見ても何も分からない。dev 検証の前には publish を止める
-- CC: レビュー指摘の HIGH は実機で踏めない経路（ドラッグ中の右クリック）だった。
-  合成入力で右クリック割り込みを作って修正を確認できた
-
----
-
-## セッション 2026-07-20 06:00（同一セッション継続分）
-
-### 現在のタスクと進捗
-- [x] ISSUE「右クリックメニューに 最大化 / 縦1列 / 横1列」→ SPEC 起案 → ヒアリング 2 問 → 承認
-- [x] Step 7-4 実装・検証・リリース（v0.13.0）。publish 常駐入れ替え済み
-
-### v0.13.0（右クリックメニューの拡張）
-
-- メニュー: 最大化（トグル）/ レイアウト: 自動・縦1列・横1行（ラジオ3択）。
-  **window モードのみ表示**（fullscreen は ceil(√N) を触らない方針を維持 / ヒアリング確定）
-- **擬似最大化**: `WindowState.Maximized` は使わず作業領域へ `SetWindowPos`。
-  `WindowStyle.None` のまま最大化すると WPF の既知挙動でタスクバーを覆うため。
-  解除で直前の矩形へ復帰、最大化中にリサイズされたらチェックを自動解除（`SyncMaximizedState`）
-- `window.json` に `maximized` / `restore*` / `layoutMode` を追加（既定値付きで旧形式も読める）
-
-### 検証手法の切り替え（重要）
-
-メニュー項目を**ピクセル座標でクリックしようとして「終了」を 2 回踏んだ**（プロセスが消えて原因を
-見失う）。**UI Automation で MenuItem を名前指定して Invoke** する方式に変えたら一発で安定。
-WPF のメニュー・ボタンの検証は今後この方式を使う（`scratchpad/menutest.ps1` に雛形）。
-
-### 注意点
-- window.json の layoutMode は検証の都合で `horizontal` のまま。常駐は fullscreen なので影響なし
-  （window モードで使うときはメニューから「自動」に戻せる）
+### ④ の重要データ
+- **ともさん確認済み: 承認ダイアログが出ていないのにマゼンタ（承認待ち）が明滅する誤 🔑 の実害あり**。
+  現状は SPEC §2（notification＝承認待ち）どおりの挙動だが、実害が出ているので Tier B で弁別を実装する価値あり
 
 ### 次のセッションで最初にやること
-1. ドラッグ並べ替え・新メニューの常用フィードバックを聞く（特に「ドラッグ直後のクリックが 1 回効かない」
-   ことがないか — セッション終盤の同時操作で最終確認が取れていない唯一の経路）
-2. Phase 6 積み残し: README（日英）にウィンドウモード / displayMode / 右クリックメニュー /
-   ドラッグ並べ替えを追記
-3. VSCode 派生対応（Insiders / Cursor / VSCodium）/ UI 文字列の英語化
+1. v0.14.0 の常用フィードバック（`● N` の見やすさ・完了経過の有用性）
+2. Tier B の設計: ④ notification 弁別（payload に何を残すか／CC Notification の弁別材料調査）→ ③b outcome
+3. Phase 6 積み残し（README 日英・VSCode 派生対応・UI 英語化）
 
 ### 注意点・ブロッカー
-- 常駐は v0.12.0 fullscreen（publish/ 運用）に入れ替え済み
-- `bin/Release/net10.0-windows/appsettings.json` は fullscreen に戻してある
-  （検証中に window へ書き換えたが復旧済み）
-- dev ビルドを起動する前に publish 版を止めること（ミューテックスで黙って終了する）
+- 常駐は v0.14.0 publish に入れ替え（fullscreen）
+- dev 起動前に publish を止める（ミューテックスで黙って終了）
 - push が 403 になったら `gh auth switch --user bsfukushi`

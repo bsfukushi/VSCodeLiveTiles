@@ -258,7 +258,14 @@ async function main() {
   }
 
   const cwd = process.cwd()
-  const projectName = resolveProjectName(cwd)
+
+  // 最頻イベントの post_tool_use / post_tool_use_failure では projectName を解決しない。
+  // PostToolUse フックは同期でターンを待たせるうえ、毎回 node 起動＋AGENTS.md read が走るため
+  // 重いセッションで数百回の無駄な同期 read になる。読み取り側（CcStateTracker）は projectName を
+  // sticky 保持し、null では上書きしないので、低頻度イベント（session_start 等）で一度解決すれば足りる。
+  // 照合の主経路は cwd basename（FolderName）で、これは projectName 抜きでも常に取れる。
+  const skipProjectName = type === 'post_tool_use' || type === 'post_tool_use_failure'
+  const projectName = skipProjectName ? null : resolveProjectName(cwd)
 
   const record = {
     ts: Date.now(),

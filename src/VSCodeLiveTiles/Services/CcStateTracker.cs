@@ -44,6 +44,7 @@ public sealed class CcStateTracker
         public long SinceTs;   // 現在の状態に遷移したイベントの ts（経過時間表示の基準）
         public long LastTs;    // 最終イベントの ts（鮮度切れ判定）
         public long StartTs;   // session_start の ts（0 = 不明。ローテーションで流れた場合）
+        public int RunningTasks; // 直近 stop 時点の running 背景タスク本数（並列度バッジ用。stop 以外で 0）
         public string? FolderName;
         public string? ProjectName;
     }
@@ -98,6 +99,16 @@ public sealed class CcStateTracker
 
             s.LastTs = ts;
 
+            // 並列度: running 本数は stop イベントにしか乗らない。stop 以外（メインが能動的に
+            // ツールを叩いている post_tool_use 等）では「裏で N 本」の枠組みが崩れるので 0 に戻す。
+            // 本数だけ変わった（stop 3→2 で状態は Working のまま）ときも再描画したいので changed を立てる。
+            int running = r.Type == "stop" ? r.RunningBackgroundTasks : 0;
+            if (s.RunningTasks != running)
+            {
+                s.RunningTasks = running;
+                changed = true;
+            }
+
             // 開始時刻は最初に観測した session_start を採用する。
             // resume では session_start が再発火するが、そこで上書きすると
             // 「そのウィンドウで作業を始めた時刻」より新しくなってしまう
@@ -126,7 +137,7 @@ public sealed class CcStateTracker
         "notification" => CcState.WaitingPermission,      // 許可要求・アイドル通知も「承認待ち」扱い（SPEC §2）
         // stop はメインエージェントのターン終了にすぎない。サブエージェントや
         // run_in_background の Bash が残っていれば作業は続いている（SPEC §8）
-        "stop" => r.HasRunningBackgroundTasks ? CcState.Working : CcState.Done,
+        "stop" => r.RunningBackgroundTasks > 0 ? CcState.Working : CcState.Done,
         "user_prompt_submit" => CcState.Working,
         "post_tool_use" => CcState.Working,               // AUQ 回答後・承認後の解除もこれで拾える
         "post_tool_use_failure" => CcState.Working,       // 失敗・拒否後も CC は続行する（承認待ちの解除）
@@ -154,8 +165,9 @@ public sealed class CcStateTracker
     /// 照合はキャプションが cwd の basename（補助: projectName）で終わるか（SPEC §4）。
     /// マッチなし・None のみなら null（バッジなし）。
     /// Started は代表セッションの開始時刻（session_start を観測できなければ null）。
+    /// RunningTasks は代表セッションの running 背景タスク本数（Working バッジの並列度表示に使う）。
     /// </summary>
-    public (CcState State, DateTime Since, DateTime? Started)? Resolve(string strippedCaption)
+    public (CcState State, DateTime Since, DateTime? Started, int RunningTasks)? Resolve(string strippedCaption)
     {
         long silentThreshold = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)SilentAge.TotalMilliseconds;
         Session? best = null;
@@ -176,7 +188,8 @@ public sealed class CcStateTracker
         return (
             best.State,
             DateTimeOffset.FromUnixTimeMilliseconds(best.SinceTs).LocalDateTime,
-            best.StartTs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(best.StartTs).LocalDateTime : null);
+            best.StartTs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(best.StartTs).LocalDateTime : null,
+            best.RunningTasks);
     }
 
     private static bool Matches(string caption, Session s)

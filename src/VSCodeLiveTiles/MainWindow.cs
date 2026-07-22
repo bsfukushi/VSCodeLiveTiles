@@ -593,7 +593,7 @@ public sealed class MainWindow : Window
         foreach (var tile in _tiles.Values)
         {
             var resolved = _ccTracker.Resolve(tile.CaptionText);
-            tile.SetCcState(resolved?.State ?? CcState.None, resolved?.Since ?? default, resolved?.Started);
+            tile.SetCcState(resolved?.State ?? CcState.None, resolved?.Since ?? default, resolved?.Started, resolved?.RunningTasks ?? 0);
             anyElapsed |= tile.IsCcWaiting || tile.HasSessionClock;
         }
         Log.SlowIf($"CC 状態の配布（{_tiles.Count} タイル）", started, Log.SlowMs);
@@ -661,7 +661,7 @@ public sealed class MainWindow : Window
             UnregisterThumb(handle);
             if (_tiles.TryGetValue(handle, out var gone))
             {
-                gone.SetCcState(CcState.None, default, null); // 明滅クロックを残さない
+                gone.SetCcState(CcState.None, default, null, 0); // 明滅クロックを残さない
                 _grid.Children.Remove(gone);
                 _tiles.Remove(handle);
             }

@@ -7,11 +7,12 @@ using System.Windows.Threading;
 namespace VSCodeLiveTiles.Services;
 
 /// <summary>CC フックイベント 1 件。events.jsonl の 1 行に対応する。</summary>
-/// <param name="HasRunningBackgroundTasks">
-/// stop 時点で走り続けている背景タスクがあるか（stop 以外では常に false）。
+/// <param name="RunningBackgroundTasks">
+/// stop 時点で走り続けている背景タスク（サブエージェント / run_in_background）の本数
+/// （stop 以外では常に 0）。0 なら作業は完了、1 以上なら裏で継続中。
 /// </param>
 public sealed record CcEventRecord(
-    long Ts, string Type, string? SessionId, string? ProjectName, string? Cwd, bool HasRunningBackgroundTasks);
+    long Ts, string Type, string? SessionId, string? ProjectName, string? Cwd, int RunningBackgroundTasks);
 
 /// <summary>
 /// CCPet フック（append-event.mjs）が追記する events.jsonl の tail リーダー。
@@ -391,7 +392,7 @@ public sealed class CcEventsReader : IDisposable
                 GetStringOrNull(root, "sessionId"),
                 GetStringOrNull(root, "projectName"),
                 GetStringOrNull(root, "cwd"),
-                HasRunningBackgroundTask(root));
+                CountRunningBackgroundTasks(root));
         }
         catch
         {
@@ -403,27 +404,29 @@ public sealed class CcEventsReader : IDisposable
         => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
 
     /// <summary>
-    /// payload.background_tasks に status="running" のタスクがあるか。
+    /// payload.background_tasks の status="running" タスク本数を数える。
     /// メインエージェントが喋り終わって stop が出ても、サブエージェント（type=subagent）や
     /// run_in_background の Bash（type=shell）はそのまま走り続ける。
     /// 終わったタスクはリストから消えるので、running が 1 つでもあれば作業は継続中。
+    /// 本数を保つのは「裏で何本動いているか（並列度）」をバッジに出すため。
     /// </summary>
-    private static bool HasRunningBackgroundTask(JsonElement root)
+    private static int CountRunningBackgroundTasks(JsonElement root)
     {
         if (!root.TryGetProperty("payload", out var payload) || payload.ValueKind != JsonValueKind.Object)
-            return false;
+            return 0;
         if (!payload.TryGetProperty("background_tasks", out var tasks) || tasks.ValueKind != JsonValueKind.Array)
-            return false;
+            return 0;
 
+        int count = 0;
         foreach (var task in tasks.EnumerateArray())
         {
             if (task.ValueKind == JsonValueKind.Object
                 && task.TryGetProperty("status", out var status)
                 && status.ValueKind == JsonValueKind.String
                 && status.ValueEquals("running"))
-                return true;
+                count++;
         }
-        return false;
+        return count;
     }
 
     public void Dispose()

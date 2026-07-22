@@ -6,7 +6,7 @@
 
 ## バージョン
 
-> **現在: v0.11.1**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.14.0**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -106,6 +106,38 @@
       （1920,0 2560x1392 ＝タスクバーを覆わない）/ 解除→直前の矩形へ復帰 /
       最大化中のリサイズでチェック自動解除 / 再起動後もレイアウト・配置・最前面を復元
 - [x] バージョン 0.13.0 ＋ コミット ＋ `git tag v0.13.0` ＋ publish 常駐入れ替え
+
+### Step 7-5: ループエンジニアリング可視化 Tier A（v0.14.0）✅ 2026-07-23 リリース済み
+
+> project-hub のループエンジニアリング相談で得たアドバイス 4 点のうち、低リスクな 3 点を実装。
+
+- [x] **① 並列サブエージェント数の可視化**: `slimBackgroundTasks` が既に書いている running 本数を
+      bool に潰さず int で運ぶ。`CcEventRecord.RunningBackgroundTasks`(int) / `Session.RunningTasks` /
+      `Resolve` が本数を返す。作業中バッジを `● N`（N>0）／不明時は `● 作業中`。
+      本数は stop イベントにしか乗らないので、他の Working 契機（post_tool_use 等）では 0 にリセット
+      （stale な数字を残さない）
+- [x] **② post_tool_use のホットパスから同期 read 除去**: `append-event.mjs` で
+      post_tool_use / post_tool_use_failure のとき projectName 解決（AGENTS.md read）をスキップ。
+      reader は projectName を sticky 保持し null で上書きしないので照合に影響なし
+- [x] **③a 完了バッジに経過表示**: `✔ 完了 N分`（放置度）。緊急性はないので秒は出さず粗く。
+      `RefreshElapsed` に Done を含め、`UpdateBadge` に Text 差分ガードを追加（同値再描画を回避）
+- [x] ビルド確認（警告 0）
+- [x] 動作確認 — 隔離 events ファイル＋実アプリ＋スクショ:
+      `● 3` 表示 / post_tool_use で `● 作業中` へリセット / `✔ 完了 0分`（クロック進行で経過描画も確認）/
+      ② は node 単体で post_tool_use→projectName:null・session_start/stop→解決を確認
+- [x] バージョン 0.14.0 ＋ コミット ＋ `git tag v0.14.0` ＋ publish 常駐入れ替え
+
+### Step 7-6: ループエンジニアリング可視化 Tier B（設計相談 → 実装）
+
+> フック機構の追加・仕様変更を伴うため、着手前に設計を固める。
+
+- [ ] **③b outcome（成功/失敗）バッジ**: 今のバッジは liveness のみで outcome を映さない。
+      Stop hook で差分テスト結果を判定し、✔緑（成功）/ ✘赤（失敗）を分ける。
+      「成功の定義（何の exit code か）」「結果の出所」から設計が必要
+- [ ] **④ notification の誤 🔑 弁別**: CC の Notification はアイドル通知（60秒放置）でも発火し、
+      承認待ちでないのにマゼンタが明滅し得る。**ともさん確認済み: 誤明滅の実害あり（2026-07-23）**。
+      現状はフックが payload を background_tasks 以外捨てているため、種別弁別には
+      notification payload の弁別材料を残す改修＋reader 追加＋SPEC §2 の仕様変更が要る
 
 ### Step 7-3: Phase 7 完了確認
 

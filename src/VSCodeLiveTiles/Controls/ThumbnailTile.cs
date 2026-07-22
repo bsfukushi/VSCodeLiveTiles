@@ -50,6 +50,7 @@ public sealed class ThumbnailTile : Border
     private CcState _ccState = CcState.None;
     private DateTime _ccSince;
     private DateTime? _ccStarted;  // セッション開始時刻（不明なら null＝時計を出さない）
+    private int _ccRunning;        // 裏で走っている背景タスク本数（作業中バッジの並列度表示。0＝不明/なし）
     private bool _ccAcknowledged;  // 待ちを一度見に行ったか（グローを止める根拠）
     private SolidColorBrush? _glowBrush; // 待ちグロー用（Opacity をアニメーションするため非 Freeze）
 
@@ -261,13 +262,14 @@ public sealed class ThumbnailTile : Border
     }
 
     /// <summary>CC 状態を設定してバッジ・枠グロー・セッション時計を更新する（MainWindow が配布）。</summary>
-    public void SetCcState(CcState state, DateTime since, DateTime? started)
+    public void SetCcState(CcState state, DateTime since, DateTime? started, int running)
     {
-        if (_ccState == state && _ccSince == since && _ccStarted == started)
+        if (_ccState == state && _ccSince == since && _ccStarted == started && _ccRunning == running)
             return;
         _ccState = state;
         _ccSince = since;
         _ccStarted = started;
+        _ccRunning = running;
         // 新しい待ちは未確認から始める。ただし既に前面なら目の前に出ているので確認済み扱い。
         // 非アクティブ化ではリセットしない（承認直後に離れると明滅がぶり返すため）。
         _ccAcknowledged = IsCcWaiting && _isActive;
@@ -275,10 +277,12 @@ public sealed class ThumbnailTile : Border
         ApplyHighlight(); // 中で UpdateClock も呼ばれる
     }
 
-    /// <summary>待ちバッジとセッション時計の経過表示を更新する（MainWindow の 1 秒タイマーから呼ばれる）。</summary>
+    /// <summary>待ち・完了バッジとセッション時計の経過表示を更新する（MainWindow の 1 秒タイマーから呼ばれる）。</summary>
     public void RefreshElapsed()
     {
-        if (IsCcWaiting)
+        // 完了バッジも「終わってからの経過（放置度）」を出すので毎秒見に行く。
+        // ただし完了は分単位表示なので、UpdateBadge の Text 差分ガードで実際の再描画は分が変わったときだけ。
+        if (IsCcWaiting || _ccState == CcState.Done)
             UpdateBadge();
         if (HasSessionClock)
             UpdateClock();
@@ -311,22 +315,26 @@ public sealed class ThumbnailTile : Border
     private void UpdateBadge()
     {
         Brush stateFg;
+        string text;
         switch (_ccState)
         {
             case CcState.WaitingQuestion:
-                _badge.Text = $"❓ 質問 {FormatElapsed()}";
+                text = $"❓ 質問 {FormatElapsed()}";
                 stateFg = QuestionFg;
                 break;
             case CcState.WaitingPermission:
-                _badge.Text = $"🔑 承認 {FormatElapsed()}";
+                text = $"🔑 承認 {FormatElapsed()}";
                 stateFg = PermissionFg;
                 break;
             case CcState.Done:
-                _badge.Text = "✔ 完了";
+                // 完了は「終わってからの経過」を出して放置セッションを見分けられるようにする。
+                text = $"✔ 完了 {FormatAge()}";
                 stateFg = DoneFg;
                 break;
             case CcState.Working:
-                _badge.Text = "● 作業中";
+                // 裏で複数の背景タスク（worktree / Workflow のサブエージェント）が走っているときは
+                // 本数を出して並列度を可視化する。本数不明（メインが能動的に作業中）は従来どおり「作業中」。
+                text = _ccRunning > 0 ? $"● {_ccRunning}" : "● 作業中";
                 stateFg = WorkingFg;
                 break;
             default:
@@ -334,18 +342,32 @@ public sealed class ThumbnailTile : Border
                 return;
         }
 
+        // 毎秒呼ばれても文字列が同じなら再代入しない（同値でもレイアウト invalidate を招くため）。
+        if (_badge.Text != text)
+            _badge.Text = text;
+
         // アクティブ（青帯）上では状態色が沈むため白・太字に切り替える
         _badge.Foreground = _isActive ? ActiveCaptionFg : stateFg;
         _badge.FontWeight = _isActive ? FontWeights.Bold : FontWeights.Normal;
         _badge.Visibility = Visibility.Visible;
     }
 
+    /// <summary>待ちバッジの経過（分:秒）。手を動かす緊急性があるので秒まで出す。</summary>
     private string FormatElapsed()
     {
         var e = DateTime.Now - _ccSince;
         if (e < TimeSpan.Zero)
             e = TimeSpan.Zero;
         return $"{(int)e.TotalMinutes}:{e.Seconds:00}";
+    }
+
+    /// <summary>完了バッジの放置度（分 / 時間分）。緊急性はないので秒は出さず粗く見せる。</summary>
+    private string FormatAge()
+    {
+        var e = DateTime.Now - _ccSince;
+        if (e < TimeSpan.Zero)
+            e = TimeSpan.Zero;
+        return e.TotalHours >= 1 ? $"{(int)e.TotalHours}時間{e.Minutes}分" : $"{e.Minutes}分";
     }
 
     public void Bind(NativeWindows.WindowInfo info)
