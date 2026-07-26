@@ -6,7 +6,7 @@
 
 ## バージョン
 
-> **現在: v0.14.0**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
+> **現在: v0.14.1**（`src/VSCodeLiveTiles/VSCodeLiveTiles.csproj` の `<Version>` が正本）
 
 | バージョン | マイルストーン |
 |---|---|
@@ -126,6 +126,34 @@
       `● 3` 表示 / post_tool_use で `● 作業中` へリセット / `✔ 完了 0分`（クロック進行で経過描画も確認）/
       ② は node 単体で post_tool_use→projectName:null・session_start/stop→解決を確認
 - [x] バージョン 0.14.0 ＋ コミット ＋ `git tag v0.14.0` ＋ publish 常駐入れ替え
+
+### Step 7-7: `cd` でセッション帰属が飛ぶバグの修正（v0.14.1）✅ 2026-07-26 リリース済み
+
+**症状**（ともさん報告 2026-07-26 15:15）: PropBoard が承認待ちダイアログを出しているのに、
+タイルにバッジも時計も一切出ない。
+
+**根本原因**: フックが書く `cwd` は `process.cwd()`＝**Bash ツールの現在位置**であって
+セッションのプロジェクトルートではない。`CcStateTracker` は全イベントの cwd で
+照合キーを上書きしていたため、`cd ~` を挟んだ直後のイベントでセッションが
+`jimu`（ホーム）を名乗り、キャプション `PropBoard` と照合できずバッジごと消えた。
+
+- [x] 実データ突き合わせで確定 — 15:14:09 の `cd ~ && grep ...` の後、15:14:16 の post_tool_use と
+      **15:14:23 の permission_request が `cwd=C:\Users\jimu`** で記録されていた
+      （＝フック側は正常に発火していた。取りこぼしではない）
+- [x] 影響範囲の実測 — 全 248 セッション中 **36 件（約15%）** で cwd basename が途中で変化。
+      迷子先の例: `drafts` / `scratchpad` / `marathon` / `mobile` / `android` / `.claude` / `jimu`。
+      なお「他プロジェクトのタイルに誤って出る」交差誤爆は 29,201 イベント中 **0 件**
+      （＝ Tier B ④ の誤 🔑 とは別問題。潜在リスクとしては残る）
+- [x] `CcStateTracker.cs` — 照合キー（FolderName / ProjectName）は `session_start` で確定し、
+      以後のイベントで上書きしない（`IdentityFromStart`）。session_start を観測できなかった
+      セッションのみ後続イベントの cwd で暫定的に埋める
+- [x] SPEC §2 / §4 に「`cwd` は Bash の現在位置」「照合キーは session_start で確定」を明記
+- [x] ビルド確認（警告 0）
+- [x] 検証 — 本体の `CcStateTracker.cs` をそのままコンパイルするハーネスに実 events.jsonl を
+      15:15:00 で打ち切って流し、Red→Green を取得:
+      修正前 `Resolve("PropBoard") -> null` / 修正後 `-> WaitingPermission since=15:14:23 started=13:11:48`
+      （＝本来 `13:11 ▸ 2:03　🔑 承認 0:37` と出るべきだった）。他 5 タイルの解決結果は不変
+- [x] バージョン 0.14.1
 
 ### Step 7-6: ループエンジニアリング可視化 Tier B（設計相談 → 実装）
 

@@ -28,6 +28,9 @@ CCPet（前身の常駐アプリ）が構築したフックインフラは今も
 - パス: `%USERPROFILE%\.ccpet\events.jsonl`（`CCPET_EVENTS_FILE` 環境変数があればそちら）
 - 形式: 1行 = 1 JSON レコード `{ts, type, sessionId, projectName, cwd, payload}`
   - `ts`: ms epoch / `sessionId`: CC セッションID / `cwd`: フック実行時の作業ディレクトリ
+  - ⚠ `cwd` は `process.cwd()`＝**その時点の Bash ツールの現在位置**であって、セッションの
+    プロジェクトルートではない（`cd` で動く）。セッションの居場所として使えるのは
+    `session_start` の `cwd` だけ（§4）
 - 書き手: `S:/Desktop Appli/CCPet/src/hooks/append-event.mjs`（グローバル hooks から起動）
 - **LiveTiles は絶対に書き込まない**。追記専用ファイルの tail リーダーに徹する
 
@@ -76,6 +79,11 @@ CCPet（前身の常駐アプリ）が構築したフックインフラは今も
   `ファイル名 - フォルダ名` の形式
 - 照合規則: **除去後キャプションが `basename(cwd)` で終わる**（大文字小文字無視）
 - 補助照合: `projectName` でも同様に試す（マルチルートワークスペース対策）
+- **照合キーは `session_start` の cwd で確定し、以後のイベントでは更新しない。**
+  フックが書く `cwd` は `process.cwd()`＝Bash ツールの現在位置なので、`cd ~` などを挟むと
+  セッションが別の場所を名乗り、タイルと照合できずバッジが丸ごと消える
+  （実測 2026-07-26 / v0.14.1 で修正）。`session_start` を観測できなかったセッションに限り、
+  名無しを避けるため後続イベントの cwd で暫定的に埋める
 - マッチしない場合は**バッジなし**（誤表示より無表示を優先）
 - 同一フォルダを複数ウィンドウで開いている場合は両方に同じバッジを出す（許容）
 

@@ -22,6 +22,9 @@ public enum CcState
 /// events.jsonl のイベント列から sessionId ごとの状態を保持し、
 /// タイルのキャプションと cwd/projectName を照合してウィンドウ単位の代表状態を返す。
 ///
+/// 照合キー（FolderName / ProjectName）は <c>session_start</c> で確定し、以後は変えない。
+/// 途中のイベントの cwd は Bash の <c>cd</c> に追従して動くため、セッションの居場所として使えない。
+///
 /// 状態機械は「同一セッションの最新イベントが状態を上書きする」だけの単純規則
 /// （SPEC §3）。イベント欠落があっても次のイベントで自然回復する。
 /// </summary>
@@ -47,6 +50,9 @@ public sealed class CcStateTracker
         public int RunningTasks; // 直近 stop 時点の running 背景タスク本数（並列度バッジ用。stop 以外で 0）
         public string? FolderName;
         public string? ProjectName;
+
+        /// <summary>識別名を session_start から取れたか（true なら以後のイベントで上書きしない）。</summary>
+        public bool IdentityFromStart;
     }
 
     private readonly Dictionary<string, Session> _sessions = new();
@@ -118,10 +124,23 @@ public sealed class CcStateTracker
                 changed = true;
             }
 
-            if (r.Cwd is not null)
-                s.FolderName = SafeBaseName(r.Cwd);
-            if (r.ProjectName is not null)
-                s.ProjectName = r.ProjectName;
+            // 識別名（照合キー）は session_start で確定させ、以後のイベントでは上書きしない。
+            // フックが書く cwd は process.cwd()、つまり Bash ツールの現在位置であって
+            // セッションの居場所ではない。`cd ~` や `cd <別リポジトリ>` を挟むと以後のイベントが
+            // その場所を名乗り、タイルのキャプションと照合できなくなってバッジごと消える
+            // （実測 2026-07-26: PropBoard セッションが `cd ~` の後 "jimu" を名乗り、
+            // 承認待ちの 100 秒間タイルが無表示になった。全 248 セッション中 36 件で発生）。
+            // session_start を観測できなかったセッション（ローテーションで流れた等）に限り、
+            // 名無しのままにしないため後続イベントの cwd で暫定的に埋める。
+            if (r.Type == "session_start" || !s.IdentityFromStart)
+            {
+                if (r.Cwd is not null)
+                    s.FolderName = SafeBaseName(r.Cwd);
+                if (r.ProjectName is not null)
+                    s.ProjectName = r.ProjectName;
+                if (r.Type == "session_start")
+                    s.IdentityFromStart = true;
+            }
         }
 
         changed |= PurgeStale();
