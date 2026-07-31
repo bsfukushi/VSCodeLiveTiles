@@ -22,7 +22,7 @@
 
 ## 技術スタック
 
-- .NET 10（開発 SDK は 8/9/10 いずれでも可）、WPF（`UseWPF`）
+- .NET 10（開発 SDK は 10 必須）、WPF（`UseWPF`）
 - Nullable enable / ImplicitUsings enable
 - UI はコードベース（XAML は App.xaml のみ、ウィンドウ・コントロールは C# で構築）
 - 外部 NuGet 依存なし（Win32 API は自前 P/Invoke: `Interop/`）
