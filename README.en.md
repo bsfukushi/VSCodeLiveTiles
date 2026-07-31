@@ -130,9 +130,11 @@ node hooks/install.mjs --dry-run # preview the changes without writing
 | ✔ Done (green) | Response finished (stays until your next input) | badge only |
 | ● Working (blue) | Running | badge only |
 
-- Tiles are matched to sessions by whether the window caption ends with the
-  folder name of the session's `cwd`. Unmatched tiles show no badge
-  (no badge is better than a wrong badge)
+- Tiles are matched to sessions by whether VSCode's original title
+  (`file - folder`) ends with the folder name of the session's `cwd`. The
+  caption bar displays `folder - file` instead, but matching still uses the
+  original order, so the reorder does not affect it. Unmatched tiles show no
+  badge (no badge is better than a wrong badge)
 - Only **waits you haven't looked at yet** pulse. Bringing that window to the
   front stops the pulsing. Claude Code has no hook that fires "at the moment
   of approval", so the waiting state clears only when the tool finishes

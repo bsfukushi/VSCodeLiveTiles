@@ -37,6 +37,10 @@ public sealed class ThumbnailTile : Border
     private static readonly Brush ClockFg = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0xA2));
 
     private readonly string[] _captionSuffixes;
+    // 表示は "プロジェクト名 - ファイル名" に並べ替えるが、CC 状態の照合は
+    // 並べ替え前（プロジェクト名が末尾）の文字列で行う。CcStateTracker が
+    // EndsWith でプロジェクト名を照合するため、表示順を照合キーに混ぜない
+    private string _matchKey = string.Empty;
     private readonly Border _frame; // タイル本体の 2px 枠（基底 Border は外周の明滅リング）
     private readonly Border _contentArea;
     private readonly Border _captionBar;
@@ -66,8 +70,12 @@ public sealed class ThumbnailTile : Border
     /// <summary>掴んでいる間の不透明度。枠（WPF）とサムネイル（DWM）で同じ濃さにするため共有する。</summary>
     public const double DragOpacity = 0.55;
 
-    /// <summary>サフィックス除去後のキャプション（CC 状態の照合キー）。</summary>
-    public string CaptionText => _caption.Text;
+    /// <summary>
+    /// サフィックス除去後のキャプション（CC 状態の照合キー）。
+    /// 帯の表示文字列（プロジェクト名が先頭）とは別物で、こちらは VSCode の
+    /// 元の並び（プロジェクト名が末尾）を保つ。
+    /// </summary>
+    public string CaptionText => _matchKey;
 
     /// <summary>質問待ち・承認待ちか（経過時間タイマーの稼働判定に使う）。</summary>
     public bool IsCcWaiting => _ccState is CcState.WaitingQuestion or CcState.WaitingPermission;
@@ -374,15 +382,24 @@ public sealed class ThumbnailTile : Border
     {
         Handle = info.Handle;
         SetMinimized(info.IsMinimized);
-        _caption.Text = StripSuffix(info.Title);
-        ToolTip = info.Title;
+        ApplyTitle(info.Title);
     }
 
     /// <summary>タイトルだけ更新（タブ切替など高頻度。サムネイルには触れない）。</summary>
     public void UpdateTitle(NativeWindows.WindowInfo info)
     {
-        _caption.Text = StripSuffix(info.Title);
-        ToolTip = info.Title;
+        ApplyTitle(info.Title);
+    }
+
+    /// <summary>
+    /// 生タイトルから照合キー（元の並び）と表示文字列（プロジェクト名が先頭）を作る。
+    /// 2 経路（Bind / UpdateTitle）で同じ結果になるよう 1 箇所に寄せている。
+    /// </summary>
+    private void ApplyTitle(string rawTitle)
+    {
+        _matchKey = StripSuffix(rawTitle);
+        _caption.Text = ToProjectFirst(_matchKey);
+        ToolTip = rawTitle;
     }
 
     /// <summary>最小化状態を反映（プレースホルダの表示切替）。</summary>
@@ -396,6 +413,39 @@ public sealed class ThumbnailTile : Border
     {
         if (Handle != IntPtr.Zero)
             Clicked?.Invoke(Handle);
+    }
+
+    // VSCode がタイトル内で使う区切り（appsettings の captionSuffixesToStrip と同じ 2 種類）。
+    // ロケール・バージョンによって半角ハイフンと em ダッシュのどちらもありうる
+    private static readonly string[] TitleSeparators = { " - ", " — " };
+
+    /// <summary>
+    /// "ファイル名 - プロジェクト名" を "プロジェクト名 - ファイル名" に並べ替える。
+    /// VSCode のタイトルは末尾がプロジェクト名なので、<b>最後の</b>区切りで割る
+    /// （ファイル名自体が区切りを含んでも、プロジェクト名側は壊れない）。
+    /// ファイルを開いていないタイトルは区切りが無く、そのまま返る＝どのタイルも
+    /// 左端がプロジェクト名で揃う。
+    /// </summary>
+    private static string ToProjectFirst(string caption)
+    {
+        var sep = string.Empty;
+        int at = -1;
+        foreach (var s in TitleSeparators)
+        {
+            int i = caption.LastIndexOf(s, StringComparison.Ordinal);
+            if (i > at)
+            {
+                at = i;
+                sep = s;
+            }
+        }
+
+        // at <= 0: 区切り無し、または先頭が区切り（ファイル名が空）→ 並べ替えない
+        // 末尾が区切り（プロジェクト名が空）も同様に触らない
+        if (at <= 0 || at + sep.Length >= caption.Length)
+            return caption;
+
+        return string.Concat(caption.AsSpan(at + sep.Length), sep, caption.AsSpan(0, at));
     }
 
     private string StripSuffix(string title)
